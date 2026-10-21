@@ -1,0 +1,39 @@
+/* Plain style for theorem-like callouts: no box, no icon, bold caption.
+   Adapted from styles/plain.scss of Math Booster / LaTeX-like Theorem & Equation Referencer,
+   (c) 2023 Ryota Ushio, MIT License; see LICENSE. */
+.callout:is([data-callout="theorem"], [data-callout="lemma"], [data-callout="proposition"],
+  [data-callout="corollary"], [data-callout="definition"], [data-callout="remark"],
+  [data-callout="example"], [data-callout="claim"], [data-callout="axiom"],
+  [data-callout="assumption"], [data-callout="exercise"], [data-callout="conjecture"],
+  [data-callout="hypothesis"]) {
+  --callout-color: var(--text-normal);
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+.callout.theorem-callout .callout-icon { display: none; }
+.callout.theorem-callout .callout-title { color: var(--text-normal); }
+.theorem-callout .theorem-callout-main-title { font-weight: bold; }
+.theorem-callout .theorem-callout-subtitle { font-weight: normal; }
+.callout.theorem-callout:is(.theorem-callout-theorem, .theorem-callout-lemma, .theorem-callout-proposition,
+  .theorem-callout-corollary, .theorem-callout-claim, .theorem-callout-conjecture,
+  .theorem-callout-hypothesis).theorem-callout-en .callout-content { font-style: italic; }
+
+.theorem-proof-begin { font-weight: bold; padding-right: 0.4em; }
+.theorem-proof-begin.theorem-proof-en { font-style: italic; }
+.theorem-proof-end { float: right; }
+
+.theorem-eq { position: relative; }
+.theorem-eq-number {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  color: var(--text-normal);
+}
+
+/* A label line after a theorem callout or equation: faint and small, but full height so the cursor reaches it. */
+.theorem-label-line { color: var(--text-faint); font-size: var(--font-smallest); }
+
+/* No box to clip to; with zero padding, sub- and superscripts of inline math would otherwise make the callout scroll. */
+.callout.theorem-callout,
+.callout.theorem-callout .callout-content { overflow: visible; }

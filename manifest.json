@@ -1,0 +1,9 @@
+{
+  "id": "theorem-callouts",
+  "name": "Theorem Callouts",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Numbered theorem, lemma and definition callouts, number-only cross-references and proof markers.",
+  "author": "Ilnur Baibulov",
+  "isDesktopOnly": false
+}
