@@ -31,9 +31,10 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `> [!definition\|*]` | **Definition.** — no number |
 | `[[#^lem-small-trace]]`, `[[Other note#^thm-main]]` | `3` — the word stays in your text, so cases and plurals are yours |
 | `$$…$$ ^eq-trace`, `[[#^eq-trace]]` | equation number `(1)` at the right; reference `(1)` |
+| `$$…\tag{A}$$ ^eq-a`, `[[#^eq-a]]` | the tag stays; reference `(A)` |
 | `` `\begin{proof}` ``, `` `\end{proof}` `` | *Proof.* … □ |
 
-Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`. All of them share one counter per note. A label is a block id on its own line after the callout, after one blank line. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
+Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
 
 Captions are in Russian or English. The language is taken from `lang: ru` / `lang: en` in the frontmatter, otherwise detected from the note's prose (math and links are ignored).
 

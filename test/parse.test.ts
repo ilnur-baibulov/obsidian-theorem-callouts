@@ -52,6 +52,7 @@ test("numbering, labels, explicit and starred numbers", () => {
 	assert.equal(refText(p.labels.get("lem-a")!), "1");
 	assert.equal(refText(p.labels.get("eq-sum")!), "(1)");
 	assert.equal(p.labels.get("eq-tagged")!.number, null);
+	assert.equal(refText(p.labels.get("eq-tagged")!), "(7)");
 	assert.equal(p.callouts.find(c => c.type === "lemma")!.title, "малый след");
 	assert.equal(captionHead(p.callouts[0], "ru"), "Лемма 1");
 	assert.equal(captionHead(p.callouts[1], "en"), "Definition");

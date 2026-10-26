@@ -45,6 +45,7 @@ export interface EquationItem {
 	line: number;
 	endLine: number;
 	number: string | null; // only labelled equations without \tag get numbers
+	tag: string | null;    // reference text of an equation with \tag{A}: "(A)"; with \tag*{A}: "A"
 	label: string | null;
 }
 
@@ -180,7 +181,7 @@ export function parseNote(text: string): ParsedNote {
 				if (end >= lines.length) continue;
 			}
 			const trailing = TRAILING_LABEL.exec(stripQuote(lines[end]).trim());
-			const item: EquationItem = { kind: "equation", line: i, endLine: end, number: null, label: null };
+			const item: EquationItem = { kind: "equation", line: i, endLine: end, number: null, tag: null, label: null };
 			if (trailing) { item.label = trailing[1]; labels.set(trailing[1], item); }
 			equations.push(item);
 			if (quoteDepth(line) === 0) { lastBlock = item; lastBlockEnd = end; }
@@ -195,7 +196,8 @@ export function parseNote(text: string): ParsedNote {
 	for (const e of equations) {
 		if (!e.label) continue;
 		const src = lines.slice(e.line, e.endLine + 1).join("\n");
-		if (/\\tag\*?\{/.test(src)) continue;
+		const tag = /\\tag(\*?)\{([^}]*)\}/.exec(src);
+		if (tag) { e.tag = tag[1] ? tag[2] : `(${tag[2]})`; continue; }
 		e.number = String(++eqCounter);
 	}
 
@@ -204,8 +206,8 @@ export function parseNote(text: string): ParsedNote {
 
 /** Text shown for a reference to `item`, or null if it has no number. */
 export function refText(item: Item): string | null {
-	if (item.number === null) return null;
-	return item.kind === "equation" ? `(${item.number})` : item.number;
+	if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
+	return item.number;
 }
 
 /** Caption of a theorem callout, e.g. «Лемма 5 (малый след).» — title is passed separately as HTML. */

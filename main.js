@@ -190,7 +190,7 @@ function parseNote(text) {
         if (end >= lines.length) continue;
       }
       const trailing = TRAILING_LABEL.exec(stripQuote(lines[end]).trim());
-      const item = { kind: "equation", line: i, endLine: end, number: null, label: null };
+      const item = { kind: "equation", line: i, endLine: end, number: null, tag: null, label: null };
       if (trailing) {
         item.label = trailing[1];
         labels.set(trailing[1], item);
@@ -208,14 +208,18 @@ function parseNote(text) {
   for (const e of equations) {
     if (!e.label) continue;
     const src = lines.slice(e.line, e.endLine + 1).join("\n");
-    if (/\\tag\*?\{/.test(src)) continue;
+    const tag = /\\tag(\*?)\{([^}]*)\}/.exec(src);
+    if (tag) {
+      e.tag = tag[1] ? tag[2] : `(${tag[2]})`;
+      continue;
+    }
     e.number = String(++eqCounter);
   }
   return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, codeLines };
 }
 function refText(item) {
-  if (item.number === null) return null;
-  return item.kind === "equation" ? `(${item.number})` : item.number;
+  if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
+  return item.number;
 }
 function captionHead(item, lang) {
   const name = NAMES[lang][item.type];
