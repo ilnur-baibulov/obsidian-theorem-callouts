@@ -17,8 +17,8 @@ const out = await esbuild.build({ entryPoints: ["src/main.ts"], bundle: true, wr
   plugins: [{ name: "stub", setup(b) { b.onResolve({ filter: /^(obsidian|@codemirror\/.*)$/ }, a => ({ path: a.path, namespace: "stub" }));
     b.onLoad({ filter: /.*/, namespace: "stub" }, () => ({ contents: `
       class Plugin { constructor(app){this.app=app;} registerMarkdownPostProcessor(){} registerEditorExtension(){} registerEvent(){} }
-      class TFile {} class MarkdownView {} class Notice {} class WidgetType {}
-      module.exports = { Plugin, TFile, MarkdownView, Notice, WidgetType, Keymap:{}, editorInfoField:{}, editorLivePreviewField:{},
+      class TFile {} class MarkdownView {} class Notice {} class WidgetType {} class PluginSettingTab {} class Setting {}
+      module.exports = { Plugin, TFile, MarkdownView, Notice, WidgetType, PluginSettingTab, Setting, Keymap:{}, editorInfoField:{}, editorLivePreviewField:{},
         ViewPlugin:{fromClass:()=>({})}, Decoration:{}, RangeSetBuilder:class{}, StateEffect:{define:()=>({})} };` })); } }] });
 const mod = { exports: {} }; new Function("module", "exports", "require", out.outputFiles[0].text)(mod, mod.exports, () => ({}));
 const Plugin = mod.exports.default;

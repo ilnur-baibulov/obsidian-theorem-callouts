@@ -1,0 +1,30 @@
+# Push a tag equal to the version in manifest.json (e.g. 0.2.0) to publish a release
+# with main.js, manifest.json, styles.css and a zip of the plugin folder.
+name: Release
+on:
+  push:
+    tags: ["*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Check tag matches manifest version
+        run: test "$(node -p 'require("./manifest.json").version')" = "$GITHUB_REF_NAME"
+      - name: Package
+        run: |
+          mkdir theorem-callouts
+          cp main.js manifest.json styles.css theorem-callouts/
+          zip -r theorem-callouts.zip theorem-callouts
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes main.js manifest.json styles.css theorem-callouts.zip

@@ -57,6 +57,14 @@ test("numbering, labels, explicit and starred numbers", () => {
 	assert.equal(captionHead(p.callouts[1], "en"), "Definition");
 });
 
+test("multi-line equation inside a callout", () => {
+	const p = parseNote("> [!theorem]\n> Then\n> $$\n> x^2\n> $$ ^eq-in\n");
+	const eq = p.labels.get("eq-in") as any;
+	assert.equal(eq.kind, "equation");
+	assert.equal(eq.endLine, 4);
+	assert.equal(eq.line, 2);
+});
+
 test("language detection ignores math and links", () => {
 	assert.equal(parseNote("Let $x\\in\\mathbb R$. Then [[Заметка]] holds.").lang, "en");
 	assert.equal(parseNote("---\nlang: en\n---\nПусть $x$.").lang, "en");

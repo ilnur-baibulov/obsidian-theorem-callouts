@@ -1,13 +1,13 @@
 # Theorem Callouts
 
-An Obsidian plugin for mathematical notes. It numbers theorem-like callouts, shows cross-references as bare numbers, numbers labelled equations and renders proof markers. It has no dependencies and no settings.
+An Obsidian plugin for mathematical notes. It numbers theorem-like callouts, shows cross-references as bare numbers, numbers labelled equations and renders proof markers. It has no dependencies and only two settings: caption language and callout style.
 
 ## Goals
 
 - Numbered statements and references in Obsidian notes that look like a printed mathematical text: «Lemma 3», «by Lemma 3», «(1)», *Proof.* … □.
 - Markup that stays readable as plain Markdown and maps one-to-one to LaTeX `\label`/`\ref`, so a note can become a paper without rewriting.
 - Notes written for Math Booster keep working unchanged.
-- Small, dependency-free and settings-free: one counter per note, no index, nothing to configure.
+- Small and dependency-free: one counter per note, no index, sensible defaults.
 
 ## Markup
 
@@ -41,15 +41,28 @@ Without the plugin the markup degrades gracefully: callouts are ordinary callout
 
 ## Installation
 
-The plugin is not in the community catalogue yet. To install it by hand:
+The plugin is not in the community catalogue yet. Install it in one of two ways.
 
-1. Build it (see Development below) or take `main.js`, `manifest.json` and `styles.css` from this repository.
-2. Copy the three files into `<vault>/.obsidian/plugins/theorem-callouts/`.
-3. Reload Obsidian and enable Theorem Callouts in Settings → Community plugins. If Math Booster is enabled, disable it, otherwise captions are processed twice.
+**From a release.**
+
+1. Download `theorem-callouts.zip` from the latest [release](https://github.com/ilnur-baibulov/obsidian-theorem-callouts/releases).
+2. Unpack it into `<vault>/.obsidian/plugins/`, so that you get `<vault>/.obsidian/plugins/theorem-callouts/main.js`, `manifest.json` and `styles.css`.
+3. Reload Obsidian and enable Theorem Callouts in Settings → Community plugins.
+
+**With [BRAT](https://github.com/TfTHacker/obsidian42-brat)**, which also keeps the plugin updated: install BRAT, run «BRAT: Add a beta plugin for testing» and enter `ilnur-baibulov/obsidian-theorem-callouts`.
+
+If Math Booster is enabled, disable it, otherwise captions are processed twice.
+
+## Settings
+
+- **Caption language**: language of «Theorem», «Proof» for notes without `lang:` in the frontmatter. By default it is detected from the note's prose.
+- **Plain style** (on by default): theorem callouts without box and icon, with a bold caption. Turn it off to keep Obsidian's usual callout look.
 
 ## Works in
 
 Reading view and Live Preview, including references to other notes. Source mode shows the raw markup.
+
+Clicking an equation reference opens the note at the equation, also when it spans several lines or sits inside a callout; Ctrl/Cmd-click opens it in a new tab. Hovering shows Obsidian's page preview of the equation, or of the labelled callout it sits in, or of the note at the equation; as with any link, the editor needs Ctrl/Cmd by default.
 
 ## Acknowledgements
 
@@ -72,3 +85,5 @@ npm install
 npm run build   # main.js
 npm test        # parser tests
 ```
+
+To publish a release, set the version in `manifest.json`, `package.json` and `versions.json`, then push a tag with that version (`git tag 0.2.0 && git push origin 0.2.0`); the Release workflow attaches the build and the zip.

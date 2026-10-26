@@ -52,6 +52,7 @@ export type Item = CalloutItem | EquationItem;
 
 export interface ParsedNote {
 	lang: Lang;
+	langFromFrontmatter: boolean;
 	callouts: CalloutItem[];
 	equations: EquationItem[];
 	labels: Map<string, Item>;
@@ -198,7 +199,7 @@ export function parseNote(text: string): ParsedNote {
 		e.number = String(++eqCounter);
 	}
 
-	return { lang, callouts, equations, labels, codeLines };
+	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, codeLines };
 }
 
 /** Text shown for a reference to `item`, or null if it has no number. */

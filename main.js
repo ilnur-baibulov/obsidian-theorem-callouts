@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => TheoremCallouts
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var import_view = require("@codemirror/view");
 var import_state = require("@codemirror/state");
 
@@ -211,7 +211,7 @@ function parseNote(text) {
     if (/\\tag\*?\{/.test(src)) continue;
     e.number = String(++eqCounter);
   }
-  return { lang, callouts, equations, labels, codeLines };
+  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, codeLines };
 }
 function refText(item) {
   if (item.number === null) return null;
@@ -226,12 +226,39 @@ function parseLinktext(linktext) {
   return m ? { path: m[1], label: m[2] } : null;
 }
 
+// src/settings.ts
+var import_obsidian = require("obsidian");
+var DEFAULT_SETTINGS = {
+  language: "auto",
+  plainStyle: true
+};
+var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    const s = this.plugin.settings;
+    new import_obsidian.Setting(containerEl).setName("Caption language").setDesc("Language of \xABTheorem\xBB, \xABProof\xBB and so on. `lang: ru` / `lang: en` in a note's frontmatter always wins.").addDropdown((d) => d.addOption("auto", "Detect from the note").addOption("en", "English").addOption("ru", "\u0420\u0443\u0441\u0441\u043A\u0438\u0439").setValue(s.language).onChange((v) => {
+      s.language = v;
+      this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Plain style").setDesc("Theorem callouts without box and icon, with a bold caption, as in a printed text. Off: Obsidian's usual callout look.").addToggle((t) => t.setValue(s.plainStyle).onChange((v) => {
+      s.plainStyle = v;
+      this.plugin.saveSettings();
+    }));
+  }
+};
+
 // src/main.ts
 var refreshEffect = import_state.StateEffect.define();
 var isTheoremType = (t) => !!t && THEOREM_TYPES.includes(t.toLowerCase());
-var TheoremCallouts = class extends import_obsidian.Plugin {
+var TheoremCallouts = class extends import_obsidian2.Plugin {
   constructor() {
     super(...arguments);
+    this.settings = { ...DEFAULT_SETTINGS };
     this.fileCache = /* @__PURE__ */ new Map();
     this.loading = /* @__PURE__ */ new Map();
     this.textCache = /* @__PURE__ */ new Map();
@@ -240,15 +267,19 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
     this.originalTitles = /* @__PURE__ */ new WeakMap();
   }
   async onload() {
+    this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
+    this.addSettingTab(new TheoremSettingTab(this.app, this));
+    this.applyBodyClass();
+    this.register(() => document.body.removeClass("theorem-callouts-plain"));
     const plugins = this.app.plugins;
     if (plugins?.enabledPlugins?.has("math-booster")) {
-      new import_obsidian.Notice("Theorem Callouts: disable Math Booster, otherwise captions are processed twice.", 1e4);
+      new import_obsidian2.Notice("Theorem Callouts: disable Math Booster, otherwise captions are processed twice.", 1e4);
     }
     this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
     this.registerEditorExtension([this.refPlugin(), this.domPlugin()]);
     this.registerEvent(this.app.metadataCache.on("changed", (file, data) => {
       const parsed = parseNote(data);
-      this.fileCache.set(file.path, { mtime: file.stat.mtime, parsed });
+      this.fileCache.set(file.path, { mtime: file.stat.mtime, text: data, parsed });
       const sig = signature(parsed);
       if (this.signatures.get(file.path) !== sig) {
         const first = !this.signatures.has(file.path);
@@ -256,6 +287,19 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
         if (!first) this.refreshAll(true);
       }
     }));
+  }
+  async saveSettings() {
+    await this.saveData(this.settings);
+    this.applyBodyClass();
+    this.refreshAll(true);
+  }
+  applyBodyClass() {
+    document.body.toggleClass("theorem-callouts-plain", this.settings.plainStyle);
+  }
+  /** Caption language: frontmatter, then the setting, then detection. */
+  langOf(p) {
+    if (!p) return this.settings.language === "auto" ? "en" : this.settings.language;
+    return p.langFromFrontmatter || this.settings.language === "auto" ? p.lang : this.settings.language;
   }
   // ---------- note index ----------
   parseText(path, text) {
@@ -288,7 +332,7 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
     if (!p) {
       p = this.app.vault.cachedRead(file).then((text) => {
         const parsed = parseNote(text);
-        this.fileCache.set(file.path, { mtime: file.stat.mtime, parsed });
+        this.fileCache.set(file.path, { mtime: file.stat.mtime, text, parsed });
         this.signatures.set(file.path, signature(parsed));
         this.loading.delete(file.path);
         return parsed;
@@ -297,37 +341,106 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
     }
     return p;
   }
+  /** Note a link points to; `#^label` points to the note it is written in. */
+  linkFile(path, sourcePath) {
+    if (path === "") {
+      const f = this.app.vault.getAbstractFileByPath(sourcePath);
+      return f instanceof import_obsidian2.TFile ? f : null;
+    }
+    return this.app.metadataCache.getFirstLinkpathDest(path, sourcePath);
+  }
   resolveTarget(linktext, sourcePath, current) {
     const lt = parseLinktext(linktext);
     if (!lt) return { item: null, pending: false };
     if (lt.path === "" && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
-    const file = this.app.metadataCache.getFirstLinkpathDest(lt.path || sourcePath, sourcePath);
+    const file = this.linkFile(lt.path, sourcePath);
     if (!file) return { item: null, pending: false };
     if (file.path === sourcePath && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
     const parsed = this.getParsed(file);
     return { item: parsed?.labels.get(lt.label) ?? null, pending: !parsed };
   }
+  /** File and item a reference points to, loading the target note if needed. */
+  async locate(linktext, sourcePath, current) {
+    const lt = parseLinktext(linktext);
+    const file = lt && this.linkFile(lt.path, sourcePath);
+    if (!lt || !file) return null;
+    const parsed = file.path === sourcePath && current ? current : await this.loadNote(file);
+    const item = parsed.labels.get(lt.label);
+    return item ? { file, item, parsed } : null;
+  }
+  // ---------- navigation and hover ----------
+  // Equations are opened at the line found by the parser rather than through Obsidian's block ids,
+  // so a reference works wherever the equation is: multi-line, inside a callout, in another note.
+  async openRef(e, linktext, sourcePath, current) {
+    const newLeaf = import_obsidian2.Keymap.isModEvent(e);
+    const target = await this.locate(linktext, sourcePath, current);
+    if (target?.item.kind !== "equation") return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
+    await this.app.workspace.getLeaf(newLeaf).openFile(target.file, { eState: { line: target.item.line } });
+  }
+  /** Shows Obsidian's page preview for a reference. Obsidian finds block ids only at the end of a top-level
+   *  block, so an equation it cannot find is previewed as its labelled callout or as the note at its line. */
+  async hoverRef(e, targetEl, parent, source, linktext, sourcePath, current) {
+    const target = await this.locate(linktext, sourcePath, current);
+    let state;
+    if (target?.item.kind === "equation" && !this.app.metadataCache.getFileCache(target.file)?.blocks?.[target.item.label.toLowerCase()]) {
+      const eq = target.item;
+      const callout = target.parsed.callouts.find((c) => c.depth === 1 && c.line <= eq.line && eq.line <= c.endLine);
+      if (callout?.label) linktext = `${target.file.path}#^${callout.label}`;
+      else {
+        linktext = target.file.path;
+        state = { scroll: eq.line };
+      }
+    }
+    this.app.workspace.trigger("hover-link", { event: e, source, hoverParent: parent, targetEl, linktext, sourcePath, state });
+  }
+  /** Reading view: Obsidian handles internal links itself, so equation links are taken over before it sees the events. */
+  bindEquationLink(a, linktext, sourcePath, current) {
+    if (a.dataset.tcEq) return;
+    a.dataset.tcEq = "1";
+    const parent = { hoverPopover: null };
+    a.addEventListener("click", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.openRef(e, linktext, sourcePath, current);
+    });
+    a.addEventListener("mouseover", (e) => {
+      e.stopPropagation();
+      this.hoverRef(e, a, parent, "preview", linktext, sourcePath, current);
+    });
+  }
   refreshAll(rerenderReading) {
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian.MarkdownView)) return;
+      if (!(view instanceof import_obsidian2.MarkdownView)) return;
       const cm = view.editor?.cm;
       cm?.dispatch({ effects: refreshEffect.of(null) });
       if (rerenderReading && view.getMode() === "preview") view.previewMode.rerender(true);
     });
   }
   // ---------- reading view ----------
-  postProcess(el, ctx) {
+  async postProcess(el, ctx) {
     const info = ctx.getSectionInfo(el);
     const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
     let parsed = null;
-    if (info) parsed = this.parseText(ctx.sourcePath, info.text);
-    else if (file instanceof import_obsidian.TFile) parsed = this.getParsed(file);
-    const lang = parsed?.lang ?? "en";
+    let offset = 0;
+    if (info) {
+      parsed = this.parseText(ctx.sourcePath, info.text);
+      if (file instanceof import_obsidian2.TFile) {
+        const whole = await this.loadNote(file).then(() => this.fileCache.get(file.path));
+        const k = whole.text === info.text ? -1 : whole.text.indexOf(info.text);
+        if (k >= 0) {
+          parsed = whole.parsed;
+          offset = whole.text.slice(0, k).split("\n").length - 1;
+        }
+      }
+    } else if (file instanceof import_obsidian2.TFile) parsed = this.getParsed(file);
+    const lang = this.langOf(parsed);
     if (info && parsed) {
-      const inRange = (items) => items.filter((i) => i.line >= info.lineStart && i.line <= info.lineEnd);
+      const inRange = (items) => items.filter((i) => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
       this.pairCallouts(el, inRange(parsed.callouts), lang);
       this.pairEquations(el, inRange(parsed.equations));
+      hideEquationLabels(el, parsed);
     }
     this.processLinks(el, ctx.sourcePath, info ? parsed : null);
     this.processProofs(el, lang);
@@ -344,7 +457,7 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
     });
   }
   pairEquations(root, items) {
-    const els = Array.from(root.querySelectorAll(".math-block"));
+    const els = displayMathEls(root);
     els.forEach((el, k) => {
       if (items[k]) applyEquationNumber(el, items[k]);
     });
@@ -376,18 +489,18 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
       const href = a.getAttribute("data-href") ?? "";
       const lt = parseLinktext(href);
       if (!lt) return;
-      const text = a.textContent ?? "";
-      if (!text.includes(lt.label)) return;
+      const aliased = !(a.textContent ?? "").includes(lt.label);
       const set = (item2) => {
+        if (item2?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
         const t = item2 && refText(item2);
-        if (t) {
+        if (t && !aliased) {
           a.setText(t);
           a.addClass("theorem-ref");
         }
       };
       const { item, pending } = this.resolveTarget(href, sourcePath, current);
       if (item || !pending) return set(item);
-      const file = this.app.metadataCache.getFirstLinkpathDest(lt.path || sourcePath, sourcePath);
+      const file = this.linkFile(lt.path, sourcePath);
       if (file) this.loadNote(file).then((p) => set(p.labels.get(lt.label) ?? null));
     });
   }
@@ -422,7 +535,7 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
       }
       apply() {
         const view = this.view;
-        if (!view.state.field(import_obsidian.editorLivePreviewField, false)) return;
+        if (!view.state.field(import_obsidian2.editorLivePreviewField, false)) return;
         const parsed = plugin.parseDoc(view.state.doc);
         this.observer.disconnect();
         try {
@@ -436,7 +549,7 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
             const end = quoteEnd(view.state.doc, line);
             const inBlock = (items) => items.filter((i) => i.line >= line && i.line <= end);
             if (block.querySelector(".callout")) {
-              plugin.pairCallouts(block, inBlock(parsed.callouts), parsed.lang);
+              plugin.pairCallouts(block, inBlock(parsed.callouts), plugin.langOf(parsed));
               plugin.pairEquations(block, inBlock(parsed.equations));
             } else if (block.matches(".math-block, .math") || block.querySelector("mjx-container")) {
               const eq = parsed.equations.find((e) => e.line <= line && line <= e.endLine);
@@ -444,6 +557,18 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
               if (eq) applyEquationNumber(target, eq);
             }
           });
+          displayMathEls(view.contentDOM).forEach((math) => {
+            if (math.closest(".cm-embed-block")) return;
+            let line;
+            try {
+              line = view.state.doc.lineAt(view.posAtDOM(math)).number - 1;
+            } catch {
+              return;
+            }
+            const eq = parsed.equations.find((e) => e.line <= line && line <= e.endLine);
+            if (eq) applyEquationNumber(math, eq);
+          });
+          view.contentDOM.querySelectorAll(".callout .theorem-eq").forEach(applyEquationLabel);
         } finally {
           this.observer.observe(view.contentDOM, { childList: true, subtree: true });
         }
@@ -461,14 +586,14 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
         this.decorations = this.build(view);
       }
       update(u) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet || u.transactions.some((t) => t.effects.some((e) => e.is(refreshEffect))) || u.startState.field(import_obsidian.editorLivePreviewField, false) !== u.state.field(import_obsidian.editorLivePreviewField, false)) {
+        if (u.docChanged || u.viewportChanged || u.selectionSet || u.transactions.some((t) => t.effects.some((e) => e.is(refreshEffect))) || u.startState.field(import_obsidian2.editorLivePreviewField, false) !== u.state.field(import_obsidian2.editorLivePreviewField, false)) {
           this.decorations = this.build(u.view);
         }
       }
       build(view) {
         const b = new import_state.RangeSetBuilder();
-        if (!view.state.field(import_obsidian.editorLivePreviewField, false)) return b.finish();
-        const sourcePath = view.state.field(import_obsidian.editorInfoField, false)?.file?.path ?? "";
+        if (!view.state.field(import_obsidian2.editorLivePreviewField, false)) return b.finish();
+        const sourcePath = view.state.field(import_obsidian2.editorInfoField, false)?.file?.path ?? "";
         const parsed = plugin.parseDoc(view.state.doc);
         const sel = view.state.selection.ranges;
         const touched = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
@@ -491,7 +616,7 @@ var TheoremCallouts = class extends import_obsidian.Plugin {
               const a = line.from + m.index, z = a + m[0].length;
               if (touched(a, z)) continue;
               if (m[2]) {
-                b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(m[2], parsed.lang) }));
+                b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(m[2], plugin.langOf(parsed)) }));
                 continue;
               }
               const { item } = plugin.resolveTarget(m[1], sourcePath, parsed);
@@ -513,9 +638,37 @@ function quoteEnd(doc, line) {
   while (end + 2 <= doc.lines && /^\s*>/.test(doc.line(end + 2).text)) end++;
   return end;
 }
+function displayMathEls(root) {
+  const found = Array.from(root.querySelectorAll(".math-block, mjx-container[display='true']")).map((el) => el.closest(".math") ?? el);
+  return [...new Set(found)];
+}
+function hideEquationLabels(root, parsed) {
+  displayMathEls(root).forEach((math) => {
+    const t = math.nextSibling;
+    if (!t || t.nodeType !== Node.TEXT_NODE) return;
+    const m = /^\s*\^([A-Za-z0-9_-]+)\s*/.exec(t.textContent ?? "");
+    if (!m || parsed.labels.get(m[1])?.kind !== "equation") return;
+    t.textContent = t.textContent.slice(m[0].length);
+    if (t.textContent === "" && t.nextSibling?.nodeName === "BR") t.nextSibling.remove();
+  });
+}
+function applyEquationLabel(el) {
+  const label = el.dataset.tcLabel;
+  if (!label) return;
+  const next = el.nextSibling;
+  if (next instanceof HTMLElement && next.matches(".theorem-eq-label")) return;
+  const span = createSpan({ cls: "theorem-eq-label", text: `^${label}` });
+  const m = next?.nodeType === Node.TEXT_NODE ? new RegExp(`^\\s*\\^${label}(?![\\w-])\\s*`).exec(next.textContent) : null;
+  if (m) {
+    next.textContent = next.textContent.slice(m[0].length);
+    span.addClass("theorem-eq-label-inline");
+  }
+  el.after(span);
+}
 function applyEquationNumber(el, eq) {
   const existing = el.querySelector(":scope > .theorem-eq-number");
   const text = eq.number === null ? null : `(${eq.number})`;
+  if (eq.label) el.dataset.tcLabel = eq.label;
   if (!text) {
     existing?.remove();
     return;
@@ -554,23 +707,25 @@ var RefWidget = class extends import_view.WidgetType {
     return o.text === this.text && o.linktext === this.linktext && o.sourcePath === this.sourcePath;
   }
   toDOM() {
-    const span = createSpan({ cls: "cm-hmd-internal-link theorem-ref" });
-    const a = span.createEl("a", { cls: "internal-link", text: this.text });
-    a.setAttr("data-href", this.linktext);
+    const span = createSpan({ cls: "theorem-ref theorem-ref-editor", text: this.text });
+    const current = () => {
+      const view = import_view.EditorView.findFromDOM(span);
+      return view ? this.plugin.parseDoc(view.state.doc) : null;
+    };
+    const parent = { hoverPopover: null };
     span.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
       if (e.button !== 0) return;
       e.preventDefault();
-      this.plugin.app.workspace.openLinkText(this.linktext, this.sourcePath, import_obsidian.Keymap.isModEvent(e));
+      this.plugin.openRef(e, this.linktext, this.sourcePath, current());
+    });
+    span.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
     });
     span.addEventListener("mouseover", (e) => {
-      this.plugin.app.workspace.trigger("hover-link", {
-        event: e,
-        source: "editor",
-        hoverParent: { hoverPopover: null },
-        targetEl: span,
-        linktext: this.linktext,
-        sourcePath: this.sourcePath
-      });
+      e.stopPropagation();
+      this.plugin.hoverRef(e, span, parent, "editor", this.linktext, this.sourcePath, current());
     });
     return span;
   }

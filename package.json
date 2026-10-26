@@ -1,11 +1,11 @@
 {
   "name": "theorem-callouts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Numbered theorem callouts, number-only references and proof markers for Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs",
-    "test": "node --experimental-strip-types --test test/"
+    "test": "node --experimental-strip-types --test test/*.test.ts"
   },
   "license": "MIT",
   "devDependencies": {

@@ -1,7 +1,8 @@
 /* Plain style for theorem-like callouts: no box, no icon, bold caption.
    Adapted from styles/plain.scss of Math Booster / LaTeX-like Theorem & Equation Referencer,
-   (c) 2023 Ryota Ushio, MIT License; see LICENSE. */
-.callout:is([data-callout="theorem"], [data-callout="lemma"], [data-callout="proposition"],
+   (c) 2023 Ryota Ushio, MIT License; see LICENSE.
+   Applies while the "Plain style" setting is on (class on body). */
+.theorem-callouts-plain .callout:is([data-callout="theorem"], [data-callout="lemma"], [data-callout="proposition"],
   [data-callout="corollary"], [data-callout="definition"], [data-callout="remark"],
   [data-callout="example"], [data-callout="claim"], [data-callout="axiom"],
   [data-callout="assumption"], [data-callout="exercise"], [data-callout="conjecture"],
@@ -13,11 +14,11 @@
   padding-left: 0;
   padding-right: 0;
 }
-.callout.theorem-callout .callout-icon { display: none; }
-.callout.theorem-callout .callout-title { color: var(--text-normal); }
+.theorem-callouts-plain .callout.theorem-callout .callout-icon { display: none; }
+.theorem-callouts-plain .callout.theorem-callout .callout-title { color: var(--text-normal); }
 .theorem-callout .theorem-callout-main-title { font-weight: bold; }
 .theorem-callout .theorem-callout-subtitle { font-weight: normal; }
-.callout.theorem-callout:is(.theorem-callout-theorem, .theorem-callout-lemma, .theorem-callout-proposition,
+.theorem-callouts-plain .callout.theorem-callout:is(.theorem-callout-theorem, .theorem-callout-lemma, .theorem-callout-proposition,
   .theorem-callout-corollary, .theorem-callout-claim, .theorem-callout-conjecture,
   .theorem-callout-hypothesis).theorem-callout-en .callout-content { font-style: italic; }
 
@@ -25,7 +26,8 @@
 .theorem-proof-begin.theorem-proof-en { font-style: italic; }
 .theorem-proof-end { float: right; }
 
-.theorem-eq { position: relative; }
+/* display: block also for `$$…$$` inside a paragraph, which Obsidian may render as an inline span. */
+.theorem-eq { position: relative; display: block; }
 .theorem-eq-number {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
   color: var(--text-normal);
@@ -33,7 +35,14 @@
 
 /* A label line after a theorem callout or equation: faint and small, but full height so the cursor reaches it. */
 .theorem-label-line { color: var(--text-faint); font-size: var(--font-smallest); }
+/* The same for the label of an equation inside a rendered callout in Live Preview. */
+.theorem-eq-label { display: block; color: var(--text-faint); font-size: var(--font-smallest); }
+.theorem-eq-label.theorem-eq-label-inline { display: inline; }
 
 /* No box to clip to; with zero padding, sub- and superscripts of inline math would otherwise make the callout scroll. */
-.callout.theorem-callout,
-.callout.theorem-callout .callout-content { overflow: visible; }
+.theorem-callouts-plain .callout.theorem-callout,
+.theorem-callouts-plain .callout.theorem-callout .callout-content { overflow: visible; }
+
+/* A reference in Live Preview: drawn by the plugin, not as an Obsidian link, but looks like one. */
+.theorem-ref-editor { color: var(--link-color); text-decoration-line: var(--link-decoration); cursor: var(--cursor-link, pointer); }
+.theorem-ref-editor:hover { color: var(--link-color-hover); text-decoration-line: var(--link-decoration-hover); }
