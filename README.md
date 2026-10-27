@@ -1,12 +1,12 @@
 # Theorem Callouts
 
-An Obsidian plugin for mathematical notes. It numbers theorem-like callouts, shows cross-references as bare numbers, numbers labelled equations and renders proof markers. It has no dependencies and only two settings: caption language and callout style.
+An Obsidian plugin for mathematical notes. It numbers theorem-like callouts, labelled equations and, on request, sections; shows cross-references as bare numbers; and renders proof markers. It has no dependencies and only two settings: caption language and callout style. A pandoc filter in `export/` makes a PDF with the same numbers.
 
 ## Goals
 
 - Numbered statements and references in Obsidian notes that look like a printed mathematical text: «Lemma 3», «by Lemma 3», «(1)», *Proof.* … □.
 - Markup that stays readable as plain Markdown and maps one-to-one to LaTeX `\label`/`\ref`, so a note can become a paper without rewriting.
-- Notes written for Math Booster keep working unchanged.
+- Math Booster's markup is read as it is, so notes written for it open without conversion; what renders differently is listed under [Differences from Math Booster](#differences-from-math-booster).
 - Small and dependency-free: one counter per note, no index, sensible defaults.
 
 ## Markup
@@ -22,6 +22,8 @@ By Lemma [[#^lem-small-trace]] and formula [[#^eq-trace]] …
 $$\tau(h)<\varepsilon$$ ^eq-trace
 
 `\begin{proof}` … `\end{proof}`
+
+`\begin{proof}[Proof of Lemma [[#^lem-small-trace]]]` … `\end{proof}`
 ```
 
 | Source | Rendered |
@@ -33,8 +35,12 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `$$…$$ ^eq-trace`, `[[#^eq-trace]]` | equation number `(1)` at the right; reference `(1)` |
 | `$$…\tag{A}$$ ^eq-a`, `[[#^eq-a]]` | the tag stays; reference `(A)` |
 | `` `\begin{proof}` ``, `` `\end{proof}` `` | *Proof.* … □ |
+| `` `\begin{proof}[Proof of Lemma [[#^lem-a]]]` `` | *Proof of Lemma 3.* — your own caption; references show numbers, `$…$` is rendered, a period is added if missing |
+| `numbersections: true` in the frontmatter | headings numbered `1`, `2.1`, `2.1.1`; `[[#Heading]]` shows `2.1` |
 
-Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
+Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
+
+Sections are numbered three levels deep, from the top heading level used in the note; a `#` heading that opens the note is its title and stays unnumbered, unless there are other `#` headings. The key is pandoc's own, so the PDF numbers the same sections.
 
 Captions are in Russian or English. The language is taken from `lang: ru` / `lang: en` in the frontmatter, otherwise detected from the note's prose (math and links are ignored).
 
@@ -65,19 +71,43 @@ Reading view and Live Preview, including references to other notes. Source mode 
 
 Clicking an equation reference opens the note at the equation, also when it spans several lines or sits inside a callout; Ctrl/Cmd-click opens it in a new tab. Hovering shows Obsidian's page preview of the equation, or of the labelled callout it sits in, or of the note at the equation; as with any link, the editor needs Ctrl/Cmd by default.
 
+## PDF export
+
+The folder [`export/`](export) has a pandoc filter, a defaults file and a LaTeX header. They turn a note into LaTeX with the numbers the plugin shows: theorem environments with `\label` and `\ref`, numbered equations, sections, proofs, and references to other notes, which the filter looks up in the vault (the nearest folder above the note that contains `.obsidian`, or `$OBSIDIAN_VAULT`).
+
+```
+pandoc note.md -o note.pdf --defaults export/defaults.yaml
+```
+
+It needs xelatex and the fonts named in `defaults.yaml`. With the Pandoc plugin for Obsidian, make the paths in `defaults.yaml` absolute and add `--defaults=/path/to/defaults.yaml` to the plugin's extra arguments. Images in webp are converted to png with macOS `sips`; elsewhere convert them yourself.
+
 ## Acknowledgements
 
 This plugin exists because of [LaTeX-like Theorem & Equation Referencer](https://github.com/RyotaUshio/obsidian-latex-theorem-equation-referencer), formerly Math Booster, by [Ryota Ushio](https://github.com/RyotaUshio) (MIT). Almost every idea here is his:
 
-- theorem environments as Obsidian callouts, `> [!theorem]`, `> [!lemma]` and the rest, with automatic numbering;
+- theorem environments as Obsidian callouts, `> [!theorem]`, `> [!lemma]` and the rest, with automatic numbering, and their short names `[!thm]`, `[!lem]`;
 - numbered display equations and references to them through block ids;
 - references that show the number instead of the link text, in the spirit of LaTeX's `cleveref`;
-- the proof environment written as `` `\begin{proof}` `` … `` `\end{proof}` ``;
+- the proof environment written as `` `\begin{proof}` `` … `` `\end{proof}` ``, and its own caption, `` `\begin{proof}[…]` ``;
 - the plain caption style, «**Theorem 3** (title).», and the `theorem-callout-*` CSS classes.
 
-Theorem Callouts keeps his markup unchanged, so a vault written for Math Booster renders here as it is, and a reader can move back to his plugin at any time. Number-only references in Math Booster are drawn by [MathLinks](https://github.com/zhaoshenzhai/obsidian-mathlinks) by Zhaoshen Zhai, which deserves credit for that idea too.
+Theorem Callouts reads his markup, so a vault written for Math Booster opens here without conversion, and a reader can move back to his plugin at any time. In Math Booster, links show the statement's name instead of the link text through [MathLinks](https://github.com/zhaoshenzhai/obsidian-mathlinks) by Zhaoshen Zhai, which deserves credit for that idea too.
 
-What is different is the implementation. The TypeScript code is written from scratch and covers only numbering, references and proofs, without the vault-wide index, search, link autocomplete, profiles and settings that make the original powerful. The plain caption style in `styles.css` is adapted from Math Booster's `styles/plain.scss`; its copyright notice is reproduced in `LICENSE`. If you need more than this small subset, use the original.
+What is different is the implementation. The TypeScript code is written from scratch and covers numbering, references and proofs; the original also has a vault-wide index, search, link autocomplete and profiles. The plain caption style in `styles.css` is adapted from Math Booster's `styles/plain.scss`; its copyright notice is reproduced in `LICENSE`. The original's last release, 2.2.0, came out in December 2023, and users report that it fails to load in recent versions of Obsidian ([#258](https://github.com/RyotaUshio/obsidian-latex-theorem-equation-referencer/issues/258), [#260](https://github.com/RyotaUshio/obsidian-latex-theorem-equation-referencer/issues/260)).
+
+## Differences from Math Booster
+
+A note written for Math Booster with its default settings renders here differently in these respects:
+
+- A reference shows the number only, «3», where Math Booster shows «Theorem 3 (title)», and «Note > Theorem 3» for another note. Write the word in the text: «by Lemma [[#^lem-a]]».
+- Numbers have no prefix taken from the note's name: in a note «3.2 Compact operators» Math Booster numbers «Theorem 3.2.1», here «Theorem 1».
+- Every labelled equation is numbered, whether or not something refers to it; a multi-line `align` gets one number, not one per line.
+- Not supported: the linked proof `` `\begin{proof}`@[[…]] ``, `%% display: … %%` comments, the version 1 header `[!math|{…}]`, profiles and per-note settings.
+
+## Plans
+
+- Autocomplete: typing `\ref` lists the numbered statements and equations of the note and of the vault, and inserts the link, adding a label where there is none; a command to search them.
+- Numbering statements within sections: «Theorem 2.3».
 
 ## Development
 

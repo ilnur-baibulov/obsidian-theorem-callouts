@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseNote, refText, captionHead, parseLinktext } from "../src/parse.ts";
+import { parseNote, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod } from "../src/parse.ts";
 
 const note = `---
 created: 2026-10-19
@@ -72,9 +72,10 @@ test("language detection ignores math and links", () => {
 });
 
 test("linktext", () => {
-	assert.deepEqual(parseLinktext("#^lem-a"), { path: "", label: "lem-a" });
-	assert.deepEqual(parseLinktext("Note name#^thm-main"), { path: "Note name", label: "thm-main" });
-	assert.equal(parseLinktext("Note#Heading"), null);
+	assert.deepEqual(parseLinktext("#^lem-a"), { path: "", label: "lem-a", heading: false });
+	assert.deepEqual(parseLinktext("Note name#^thm-main"), { path: "Note name", label: "thm-main", heading: false });
+	assert.deepEqual(parseLinktext("Note#Heading"), { path: "Note", label: "Heading", heading: true });
+	assert.equal(parseLinktext("Note"), null);
 });
 
 test("real article: every link target exists and numbers are sequential", () => {
@@ -87,4 +88,43 @@ test("real article: every link target exists and numbers are sequential", () => 
 	const links = [...text.matchAll(/\[\[#\^([\w-]+)\]\]/g)].map(m => m[1]);
 	for (const l of links) assert.ok(p.labels.has(l), `missing label ${l}`);
 	console.log(`callouts=${p.callouts.length} labels=${p.labels.size} links=${links.length} lang=${p.lang}`);
+});
+
+test("section numbers and links to headings", () => {
+	const src = `---
+numbersections: true
+---
+# Заголовок заметки
+
+## Введение
+## Оценки
+### Малый  след
+#### Слишком глубоко
+## Итог
+> ## в цитате
+\`\`\`
+## в коде
+\`\`\`
+`;
+	const p = parseNote(src);
+	assert.deepEqual(p.headings.map(h => `${h.text}:${h.number}`),
+		["Заголовок заметки:null", "Введение:1", "Оценки:2", "Малый  след:2.1", "Слишком глубоко:2.1.1", "Итог:3"]);
+	const lt = parseLinktext("#Оценки#малый след")!;
+	assert.deepEqual(lt, { path: "", label: "малый след", heading: true });
+	assert.equal(refText(findTarget(p, lt)!), "2.1");
+	assert.equal(parseNote(src.replace("numbersections: true", "lang: ru")).headings[1].number, null);
+	assert.equal(parseNote("# A\n# B\n## C").headings.map(h => h.number).join(), ",,");
+});
+
+test("proof captions", () => {
+	assert.equal(proofTitle("\\begin{proof}[Доказательство теоремы [[#^thm]]]"), "Доказательство теоремы [[#^thm]]");
+	assert.equal(proofTitle("\\begin{proof}"), null);
+	assert.equal(withPeriod("Решение"), "Решение.");
+	assert.equal(withPeriod("Решение."), "Решение.");
+});
+
+test("short type names", () => {
+	const p = parseNote("> [!thm] главная\n> Текст.\n^thm-a\n\n> [!lem]\n> Текст.\n\n> [!note]\n> Не теорема.");
+	assert.deepEqual(p.callouts.map(c => `${c.type}:${c.number}`), ["theorem:1", "lemma:2"]);
+	assert.equal(refText(p.labels.get("thm-a")!), "1");
 });

@@ -1,19 +1,18 @@
 import {
 	Plugin, MarkdownPostProcessorContext, MarkdownView, TFile, Notice, Keymap,
-	HoverParent, editorInfoField, editorLivePreviewField,
+	HoverParent, editorInfoField, editorLivePreviewField, renderMath, finishRenderMath,
 } from "obsidian";
 import {
 	ViewPlugin, ViewUpdate, Decoration, DecorationSet, WidgetType, EditorView,
 } from "@codemirror/view";
 import { RangeSetBuilder, StateEffect, Text } from "@codemirror/state";
 import {
-	parseNote, ParsedNote, CalloutItem, EquationItem, Item, Lang,
-	THEOREM_TYPES, PROOF, refText, captionHead, parseLinktext,
+	parseNote, ParsedNote, CalloutItem, EquationItem, HeadingItem, Item, Lang,
+	PROOF, theoremType, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
 
 const refreshEffect = StateEffect.define<null>();
-const isTheoremType = (t: string | null) => !!t && (THEOREM_TYPES as readonly string[]).includes(t.toLowerCase());
 
 export default class TheoremCallouts extends Plugin {
 	settings: TheoremSettings = { ...DEFAULT_SETTINGS };
@@ -119,12 +118,12 @@ export default class TheoremCallouts extends Plugin {
 	resolveTarget(linktext: string, sourcePath: string, current: ParsedNote | null): { item: Item | null; pending: boolean } {
 		const lt = parseLinktext(linktext);
 		if (!lt) return { item: null, pending: false };
-		if (lt.path === "" && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
+		if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false };
 		const file = this.linkFile(lt.path, sourcePath);
 		if (!file) return { item: null, pending: false };
-		if (file.path === sourcePath && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
+		if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false };
 		const parsed = this.getParsed(file);
-		return { item: parsed?.labels.get(lt.label) ?? null, pending: !parsed };
+		return { item: parsed && findTarget(parsed, lt), pending: !parsed };
 	}
 
 	/** File and item a reference points to, loading the target note if needed. */
@@ -133,7 +132,7 @@ export default class TheoremCallouts extends Plugin {
 		const file = lt && this.linkFile(lt.path, sourcePath);
 		if (!lt || !file) return null;
 		const parsed = file.path === sourcePath && current ? current : await this.loadNote(file);
-		const item = parsed.labels.get(lt.label);
+		const item = findTarget(parsed, lt);
 		return item ? { file, item, parsed } : null;
 	}
 
@@ -181,6 +180,49 @@ export default class TheoremCallouts extends Plugin {
 		});
 	}
 
+	/** A reference drawn by the plugin, not as an Obsidian link: Obsidian previews and follows those itself,
+	 *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
+	refEl(text: string, linktext: string, sourcePath: string, current: () => ParsedNote | null, source: "preview" | "editor"): HTMLElement {
+		const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+		const parent: HoverParent = { hoverPopover: null };
+		span.addEventListener("mousedown", e => {
+			e.stopPropagation();
+			if (e.button !== 0) return;
+			e.preventDefault();
+			this.openRef(e, linktext, sourcePath, current());
+		});
+		span.addEventListener("click", e => { e.stopPropagation(); e.preventDefault(); });
+		span.addEventListener("mouseover", e => {
+			e.stopPropagation();
+			this.hoverRef(e, span, parent, source, linktext, sourcePath, current());
+		});
+		return span;
+	}
+
+	/** Caption of a proof with its own text: references show numbers, `$…$` is rendered. */
+	proofCaption(title: string, lang: Lang, sourcePath: string, current: () => ParsedNote | null, source: "preview" | "editor"): HTMLElement {
+		const span = createSpan({ cls: `theorem-proof-begin theorem-proof-${lang}` });
+		const text = withPeriod(title);
+		const re = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]|\$([^$]+)\$/g;
+		let pos = 0, m: RegExpExecArray | null;
+		while ((m = re.exec(text))) {
+			span.appendText(text.slice(pos, m.index));
+			pos = re.lastIndex;
+			if (m[3] !== undefined) span.appendChild(renderMath(m[3], false));
+			else if (m[2] !== undefined) span.appendText(m[2]);
+			else {
+				const linktext = m[1];
+				const { item } = this.resolveTarget(linktext, sourcePath, current());
+				const shown = item && refText(item);
+				const ref = span.appendChild(this.refEl(shown ?? "…", linktext, sourcePath, current, source));
+				if (!shown) this.locate(linktext, sourcePath, current()).then(t => ref.setText((t && refText(t.item)) ?? "??"));
+			}
+		}
+		span.appendText(text.slice(pos));
+		finishRenderMath();
+		return span;
+	}
+
 	refreshAll(rerenderReading: boolean) {
 		this.app.workspace.iterateAllLeaves(leaf => {
 			const view = leaf.view;
@@ -215,21 +257,23 @@ export default class TheoremCallouts extends Plugin {
 				items.filter(i => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
 			this.pairCallouts(el, inRange(parsed.callouts), lang);
 			this.pairEquations(el, inRange(parsed.equations));
+			pairHeadings(el, inRange(parsed.headings));
 			hideEquationLabels(el, parsed);
 		}
-		this.processLinks(el, ctx.sourcePath, info ? parsed : null);
-		this.processProofs(el, lang);
+		const current = info ? parsed : null;
+		this.processLinks(el, ctx.sourcePath, current);
+		this.processProofs(el, lang, ctx.sourcePath, current);
 	}
 
 	private theoremCalloutEls(root: HTMLElement): HTMLElement[] {
 		const all = Array.from(root.querySelectorAll<HTMLElement>(".callout"));
 		if (root.matches(".callout")) all.unshift(root);
-		return all.filter(c => isTheoremType(c.getAttribute("data-callout")));
+		return all.filter(c => theoremType(c.getAttribute("data-callout")));
 	}
 
 	pairCallouts(root: HTMLElement, items: CalloutItem[], lang: Lang) {
 		const els = this.theoremCalloutEls(root);
-		els.forEach((el, k) => { if (items[k] && items[k].type === el.getAttribute("data-callout")?.toLowerCase()) this.applyCaption(el, items[k], lang); });
+		els.forEach((el, k) => { if (items[k] && items[k].type === theoremType(el.getAttribute("data-callout"))) this.applyCaption(el, items[k], lang); });
 	}
 
 	pairEquations(root: HTMLElement, items: EquationItem[]) {
@@ -278,11 +322,13 @@ export default class TheoremCallouts extends Plugin {
 		});
 	}
 
-	private processProofs(el: HTMLElement, lang: Lang) {
+	private processProofs(el: HTMLElement, lang: Lang, sourcePath: string, current: ParsedNote | null) {
 		el.querySelectorAll("code").forEach(code => {
-			const t = code.textContent?.trim();
+			const t = code.textContent?.trim() ?? "";
+			const title = proofTitle(t);
 			if (t === "\\begin{proof}") code.replaceWith(proofSpan("begin", lang));
 			else if (t === "\\end{proof}") code.replaceWith(proofSpan("end", lang));
+			else if (title !== null) code.replaceWith(this.proofCaption(title, lang, sourcePath, () => current, "preview"));
 		});
 	}
 
@@ -364,7 +410,8 @@ export default class TheoremCallouts extends Plugin {
 				const parsed = plugin.parseDoc(view.state.doc);
 				const sel = view.state.selection.ranges;
 				const touched = (from: number, to: number) => sel.some(r => r.from <= to && r.to >= from);
-				const re = /\[\[([^\]|\n]+?)\]\]|`\\(begin|end)\{proof\}`/g;
+				const re = /\[\[([^\]|\n]+?)\]\]|`\\(begin|end)\{proof\}(?:\[([^`]*)\])?`/g;
+				const headings = new Map(parsed.headings.filter(h => h.number).map(h => [h.line, h]));
 				// Visible ranges are split around replaced spans of 20+ characters (rendered inline math),
 				// so one line can belong to several ranges; RangeSetBuilder needs each line once, in order.
 				let done = 0;
@@ -379,13 +426,25 @@ export default class TheoremCallouts extends Plugin {
 							b.add(line.from, line.from, Decoration.line({ class: "theorem-label-line" }));
 							continue;
 						}
+						const heading = headings.get(n - 1);
+						if (heading) {
+							const at = line.from + /^#+\s*/.exec(line.text)![0].length;
+							b.add(at, at, Decoration.widget({ widget: new HeadingNumberWidget(heading.number!), side: -1 }));
+						}
 						re.lastIndex = 0;
 						let m: RegExpExecArray | null;
 						while ((m = re.exec(line.text))) {
 							const a = line.from + m.index, z = a + m[0].length;
 							if (touched(a, z)) continue;
+							if (m[2] === "end" && m[3] !== undefined) continue;
 							if (m[2]) {
-								b.add(a, z, Decoration.replace({ widget: new ProofWidget(m[2] as "begin" | "end", plugin.langOf(parsed)) }));
+								const title = m[3] === undefined ? null : m[3];
+								// Numbers in a caption are part of the widget's identity, so a renumbering redraws it.
+								const key = title && title.replace(/\[\[([^\]|]+)\]\]/g, (_, lt) => {
+									const { item } = plugin.resolveTarget(lt, sourcePath, parsed);
+									return `[[${(item && refText(item)) ?? lt}]]`;
+								});
+								b.add(a, z, Decoration.replace({ widget: new ProofWidget(plugin, m[2] as "begin" | "end", plugin.langOf(parsed), title, key, sourcePath) }));
 								continue;
 							}
 							const { item } = plugin.resolveTarget(m[1], sourcePath, parsed);
@@ -403,7 +462,7 @@ export default class TheoremCallouts extends Plugin {
 // ---------- helpers ----------
 
 function signature(p: ParsedNote): string {
-	return [...p.callouts.map(c => `${c.line}:${c.number}`), ...p.equations.map(e => `${e.line}:${e.number}`), p.lang].join(",");
+	return [...p.callouts, ...p.equations, ...p.headings].map(i => `${i.line}:${i.number}`).concat(p.lang).join(",");
 }
 
 /** Last line of the quote block that starts at `line` (0-based). */
@@ -448,6 +507,20 @@ function applyEquationLabel(el: HTMLElement) {
 	el.after(span);
 }
 
+/** Reading view: section numbers before headings, which are paired with the parsed ones in order. */
+function pairHeadings(root: HTMLElement, items: HeadingItem[]) {
+	const els = Array.from(root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"));
+	if (root.matches("h1, h2, h3, h4, h5, h6")) els.unshift(root);
+	els.filter(h => !h.closest("blockquote, .callout")).forEach((h, k) => {
+		const number = items[k]?.number;
+		let span = h.querySelector<HTMLElement>(":scope > .theorem-heading-number");
+		if (!number) return span?.remove();
+		span ??= createSpan({ cls: "theorem-heading-number" });
+		span.setText(number);
+		if (span.parentElement !== h) h.insertBefore(span, h.querySelector(":scope > .heading-collapse-indicator")?.nextSibling ?? h.firstChild);
+	});
+}
+
 /** Obsidian renders a previewed note from the top and scrolls to the line afterwards, highlighting it,
  *  so the next popover is kept hidden until the highlight appears. */
 function holdUntilScrolled(doc: Document) {
@@ -487,35 +560,26 @@ function proofSpan(kind: "begin" | "end", lang: Lang): HTMLElement {
 }
 
 class ProofWidget extends WidgetType {
-	constructor(private kind: "begin" | "end", private lang: Lang) { super(); }
-	eq(o: ProofWidget) { return o.kind === this.kind && o.lang === this.lang; }
-	toDOM() { return proofSpan(this.kind, this.lang); }
+	constructor(private plugin: TheoremCallouts, private kind: "begin" | "end", private lang: Lang,
+		private title: string | null, private key: string | null, private sourcePath: string) { super(); }
+	eq(o: ProofWidget) { return o.kind === this.kind && o.lang === this.lang && o.key === this.key && o.sourcePath === this.sourcePath; }
+	toDOM(view: EditorView) {
+		if (this.title === null) return proofSpan(this.kind, this.lang);
+		return this.plugin.proofCaption(this.title, this.lang, this.sourcePath, () => this.plugin.parseDoc(view.state.doc), "editor");
+	}
+}
+
+class HeadingNumberWidget extends WidgetType {
+	constructor(private number: string) { super(); }
+	eq(o: HeadingNumberWidget) { return o.number === this.number; }
+	toDOM() { return createSpan({ cls: "theorem-heading-number", text: this.number }); }
 }
 
 class RefWidget extends WidgetType {
 	constructor(private plugin: TheoremCallouts, private text: string, private linktext: string, private sourcePath: string) { super(); }
 	eq(o: RefWidget) { return o.text === this.text && o.linktext === this.linktext && o.sourcePath === this.sourcePath; }
-	toDOM() {
-		// Not an `a.internal-link`: Obsidian previews and follows those itself, by block id,
-		// which fails for an equation inside a callout ("Unable to find"). Events stop here.
-		const span = createSpan({ cls: "theorem-ref theorem-ref-editor", text: this.text });
-		const current = () => {
-			const view = EditorView.findFromDOM(span);
-			return view ? this.plugin.parseDoc(view.state.doc) : null;
-		};
-		const parent: HoverParent = { hoverPopover: null };
-		span.addEventListener("mousedown", e => {
-			e.stopPropagation();
-			if (e.button !== 0) return;
-			e.preventDefault();
-			this.plugin.openRef(e, this.linktext, this.sourcePath, current());
-		});
-		span.addEventListener("click", e => { e.stopPropagation(); e.preventDefault(); });
-		span.addEventListener("mouseover", e => {
-			e.stopPropagation();
-			this.plugin.hoverRef(e, span, parent, "editor", this.linktext, this.sourcePath, current());
-		});
-		return span;
+	toDOM(view: EditorView) {
+		return this.plugin.refEl(this.text, this.linktext, this.sourcePath, () => this.plugin.parseDoc(view.state.doc), "editor");
 	}
 	ignoreEvent() { return true; }
 }

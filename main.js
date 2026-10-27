@@ -43,6 +43,25 @@ var THEOREM_TYPES = [
   "conjecture",
   "hypothesis"
 ];
+var TYPE_ALIASES = {
+  axm: "axiom",
+  def: "definition",
+  lem: "lemma",
+  prp: "proposition",
+  thm: "theorem",
+  cor: "corollary",
+  clm: "claim",
+  asm: "assumption",
+  exm: "example",
+  exr: "exercise",
+  cnj: "conjecture",
+  hyp: "hypothesis",
+  rmk: "remark"
+};
+function theoremType(t) {
+  const k = t?.toLowerCase() ?? "";
+  return THEOREM_TYPES.includes(k) ? k : TYPE_ALIASES[k] ?? null;
+}
 var NAMES = {
   ru: {
     theorem: "\u0422\u0435\u043E\u0440\u0435\u043C\u0430",
@@ -82,6 +101,7 @@ var PROOF = {
 var HEADER = /^((?:>\s*)+)\[!([A-Za-z]+)(?:\|([^\]]*))?\]([+-]?)[ \t]*(.*)$/;
 var LABEL_LINE = /^\s*\^([A-Za-z0-9_-]+)\s*$/;
 var TRAILING_LABEL = /\$\$\s*\^([A-Za-z0-9_-]+)\s*$/;
+var HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 function quoteDepth(line) {
   const m = /^((?:>\s*)*)/.exec(line);
   return m ? (m[1].match(/>/g) ?? []).length : 0;
@@ -89,9 +109,9 @@ function quoteDepth(line) {
 function stripQuote(line) {
   return line.replace(/^(?:>\s*)+/, "");
 }
-function detectLang(text, frontmatterLang2) {
-  if (frontmatterLang2) {
-    const l = frontmatterLang2.trim().toLowerCase();
+function detectLang(text, frontmatterLang) {
+  if (frontmatterLang) {
+    const l = frontmatterLang.trim().toLowerCase();
     if (l.startsWith("ru")) return "ru";
     if (l.startsWith("en")) return "en";
   }
@@ -100,23 +120,29 @@ function detectLang(text, frontmatterLang2) {
   const lat = (prose.match(/[A-Za-z]/g) ?? []).length;
   return cyr >= lat && cyr > 0 ? "ru" : "en";
 }
-function frontmatterLang(lines) {
-  if (lines[0] !== "---") return { end: 0 };
+function frontmatter(lines) {
+  if (lines[0] !== "---") return { numberSections: false, end: 0 };
   for (let i = 1; i < lines.length; i++) {
     if (lines[i] === "---") {
-      const lang = lines.slice(1, i).map((l) => /^lang:\s*(.+)$/.exec(l)).find(Boolean)?.[1];
-      return { lang, end: i + 1 };
+      const body = lines.slice(1, i);
+      const lang = body.map((l) => /^lang:\s*(.+)$/.exec(l)).find(Boolean)?.[1];
+      const numberSections = body.some((l) => /^numbersections:\s*true\s*$/i.test(l));
+      return { lang, numberSections, end: i + 1 };
     }
   }
-  return { end: 0 };
+  return { numberSections: false, end: 0 };
+}
+function headingKey(text) {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 function parseNote(text) {
   const lines = text.split("\n");
-  const fm = frontmatterLang(lines);
+  const fm = frontmatter(lines);
   const lang = detectLang(text, fm.lang);
   const callouts = [];
   const equations = [];
   const labels = /* @__PURE__ */ new Map();
+  const headings = [];
   const codeLines = /* @__PURE__ */ new Set();
   let fence = null;
   for (let i = fm.end; i < lines.length; i++) {
@@ -152,11 +178,11 @@ function parseNote(text) {
     }
     const h = HEADER.exec(line);
     if (h) {
-      const type = h[2].toLowerCase();
+      const type = theoremType(h[2]);
       const depth = (h[1].match(/>/g) ?? []).length;
       let end = i;
       while (end + 1 < lines.length && quoteDepth(lines[end + 1]) >= depth) end++;
-      if (THEOREM_TYPES.includes(type)) {
+      if (type) {
         const meta = h[3];
         let number;
         if (meta === void 0 || meta.trim() === "") number = String(++counter);
@@ -178,6 +204,12 @@ function parseNote(text) {
           lastBlockEnd = end;
         }
       }
+      continue;
+    }
+    const hd = quoteDepth(line) === 0 ? HEADING.exec(line) : null;
+    if (hd) {
+      headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null });
+      lastBlock = null;
       continue;
     }
     const body = stripQuote(line).trim();
@@ -215,19 +247,50 @@ function parseNote(text) {
     }
     e.number = String(++eqCounter);
   }
-  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, codeLines };
+  if (fm.numberSections) numberHeadings(headings, lines, fm.end);
+  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, codeLines };
+}
+function numberHeadings(headings, lines, start) {
+  let list = headings;
+  const first = lines.slice(start).findIndex((l) => l.trim() !== "") + start;
+  if (list[0]?.level === 1 && list[0].line === first && !list.slice(1).some((h) => h.level === 1)) list = list.slice(1);
+  if (!list.length) return;
+  const top = Math.min(...list.map((h) => h.level));
+  const counters = [0, 0, 0];
+  for (const h of list) {
+    const depth = h.level - top;
+    if (depth > 2) continue;
+    counters[depth]++;
+    counters.fill(0, depth + 1);
+    h.number = counters.slice(0, depth + 1).join(".");
+  }
 }
 function refText(item) {
   if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
   return item.number;
+}
+function findTarget(p, lt) {
+  if (!lt.heading) return p.labels.get(lt.label) ?? null;
+  const key = headingKey(lt.label);
+  return p.headings.find((h) => headingKey(h.text) === key) ?? null;
 }
 function captionHead(item, lang) {
   const name = NAMES[lang][item.type];
   return item.number === null ? name : `${name} ${item.number}`;
 }
 function parseLinktext(linktext) {
-  const m = /^([^#|]*)#\^([A-Za-z0-9_-]+)$/.exec(linktext.trim());
-  return m ? { path: m[1], label: m[2] } : null;
+  const t = linktext.trim();
+  const m = /^([^#|]*)#\^([A-Za-z0-9_-]+)$/.exec(t);
+  if (m) return { path: m[1], label: m[2], heading: false };
+  const h = /^([^#|^]*)#(?:[^#|]*#)*([^#|]+)$/.exec(t);
+  return h ? { path: h[1], label: h[2].trim(), heading: true } : null;
+}
+function proofTitle(code) {
+  const m = /^\\begin\{proof\}\[(.*)\]$/s.exec(code.trim());
+  return m ? m[1].trim() : null;
+}
+function withPeriod(text) {
+  return /[.!?:]$/.test(text) ? text : text + ".";
 }
 
 // src/settings.ts
@@ -258,7 +321,6 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
 
 // src/main.ts
 var refreshEffect = import_state.StateEffect.define();
-var isTheoremType = (t) => !!t && THEOREM_TYPES.includes(t.toLowerCase());
 var TheoremCallouts = class extends import_obsidian2.Plugin {
   constructor() {
     super(...arguments);
@@ -356,12 +418,12 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   resolveTarget(linktext, sourcePath, current) {
     const lt = parseLinktext(linktext);
     if (!lt) return { item: null, pending: false };
-    if (lt.path === "" && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
+    if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false };
     const file = this.linkFile(lt.path, sourcePath);
     if (!file) return { item: null, pending: false };
-    if (file.path === sourcePath && current) return { item: current.labels.get(lt.label) ?? null, pending: false };
+    if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false };
     const parsed = this.getParsed(file);
-    return { item: parsed?.labels.get(lt.label) ?? null, pending: !parsed };
+    return { item: parsed && findTarget(parsed, lt), pending: !parsed };
   }
   /** File and item a reference points to, loading the target note if needed. */
   async locate(linktext, sourcePath, current) {
@@ -369,7 +431,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     const file = lt && this.linkFile(lt.path, sourcePath);
     if (!lt || !file) return null;
     const parsed = file.path === sourcePath && current ? current : await this.loadNote(file);
-    const item = parsed.labels.get(lt.label);
+    const item = findTarget(parsed, lt);
     return item ? { file, item, parsed } : null;
   }
   // ---------- navigation and hover ----------
@@ -414,6 +476,50 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       this.hoverRef(e, a, parent, "preview", linktext, sourcePath, current);
     });
   }
+  /** A reference drawn by the plugin, not as an Obsidian link: Obsidian previews and follows those itself,
+   *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
+  refEl(text, linktext, sourcePath, current, source) {
+    const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+    const parent = { hoverPopover: null };
+    span.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      if (e.button !== 0) return;
+      e.preventDefault();
+      this.openRef(e, linktext, sourcePath, current());
+    });
+    span.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+    });
+    span.addEventListener("mouseover", (e) => {
+      e.stopPropagation();
+      this.hoverRef(e, span, parent, source, linktext, sourcePath, current());
+    });
+    return span;
+  }
+  /** Caption of a proof with its own text: references show numbers, `$…$` is rendered. */
+  proofCaption(title, lang, sourcePath, current, source) {
+    const span = createSpan({ cls: `theorem-proof-begin theorem-proof-${lang}` });
+    const text = withPeriod(title);
+    const re = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]|\$([^$]+)\$/g;
+    let pos = 0, m;
+    while (m = re.exec(text)) {
+      span.appendText(text.slice(pos, m.index));
+      pos = re.lastIndex;
+      if (m[3] !== void 0) span.appendChild((0, import_obsidian2.renderMath)(m[3], false));
+      else if (m[2] !== void 0) span.appendText(m[2]);
+      else {
+        const linktext = m[1];
+        const { item } = this.resolveTarget(linktext, sourcePath, current());
+        const shown = item && refText(item);
+        const ref = span.appendChild(this.refEl(shown ?? "\u2026", linktext, sourcePath, current, source));
+        if (!shown) this.locate(linktext, sourcePath, current()).then((t) => ref.setText((t && refText(t.item)) ?? "??"));
+      }
+    }
+    span.appendText(text.slice(pos));
+    (0, import_obsidian2.finishRenderMath)();
+    return span;
+  }
   refreshAll(rerenderReading) {
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view;
@@ -445,20 +551,22 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       const inRange = (items) => items.filter((i) => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
       this.pairCallouts(el, inRange(parsed.callouts), lang);
       this.pairEquations(el, inRange(parsed.equations));
+      pairHeadings(el, inRange(parsed.headings));
       hideEquationLabels(el, parsed);
     }
-    this.processLinks(el, ctx.sourcePath, info ? parsed : null);
-    this.processProofs(el, lang);
+    const current = info ? parsed : null;
+    this.processLinks(el, ctx.sourcePath, current);
+    this.processProofs(el, lang, ctx.sourcePath, current);
   }
   theoremCalloutEls(root) {
     const all = Array.from(root.querySelectorAll(".callout"));
     if (root.matches(".callout")) all.unshift(root);
-    return all.filter((c) => isTheoremType(c.getAttribute("data-callout")));
+    return all.filter((c) => theoremType(c.getAttribute("data-callout")));
   }
   pairCallouts(root, items, lang) {
     const els = this.theoremCalloutEls(root);
     els.forEach((el, k) => {
-      if (items[k] && items[k].type === el.getAttribute("data-callout")?.toLowerCase()) this.applyCaption(el, items[k], lang);
+      if (items[k] && items[k].type === theoremType(el.getAttribute("data-callout"))) this.applyCaption(el, items[k], lang);
     });
   }
   pairEquations(root, items) {
@@ -509,11 +617,13 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       if (file) this.loadNote(file).then((p) => set(p.labels.get(lt.label) ?? null));
     });
   }
-  processProofs(el, lang) {
+  processProofs(el, lang, sourcePath, current) {
     el.querySelectorAll("code").forEach((code) => {
-      const t = code.textContent?.trim();
+      const t = code.textContent?.trim() ?? "";
+      const title = proofTitle(t);
       if (t === "\\begin{proof}") code.replaceWith(proofSpan("begin", lang));
       else if (t === "\\end{proof}") code.replaceWith(proofSpan("end", lang));
+      else if (title !== null) code.replaceWith(this.proofCaption(title, lang, sourcePath, () => current, "preview"));
     });
   }
   // ---------- live preview: rendered callouts and equations ----------
@@ -602,7 +712,8 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
         const parsed = plugin.parseDoc(view.state.doc);
         const sel = view.state.selection.ranges;
         const touched = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
-        const re = /\[\[([^\]|\n]+?)\]\]|`\\(begin|end)\{proof\}`/g;
+        const re = /\[\[([^\]|\n]+?)\]\]|`\\(begin|end)\{proof\}(?:\[([^`]*)\])?`/g;
+        const headings = new Map(parsed.headings.filter((h) => h.number).map((h) => [h.line, h]));
         let done = 0;
         for (const { from, to } of view.visibleRanges) {
           const start = Math.max(view.state.doc.lineAt(from).number, done + 1), stop = view.state.doc.lineAt(to).number;
@@ -615,13 +726,24 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
               b.add(line.from, line.from, import_view.Decoration.line({ class: "theorem-label-line" }));
               continue;
             }
+            const heading = headings.get(n - 1);
+            if (heading) {
+              const at = line.from + /^#+\s*/.exec(line.text)[0].length;
+              b.add(at, at, import_view.Decoration.widget({ widget: new HeadingNumberWidget(heading.number), side: -1 }));
+            }
             re.lastIndex = 0;
             let m;
             while (m = re.exec(line.text)) {
               const a = line.from + m.index, z = a + m[0].length;
               if (touched(a, z)) continue;
+              if (m[2] === "end" && m[3] !== void 0) continue;
               if (m[2]) {
-                b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(m[2], plugin.langOf(parsed)) }));
+                const title = m[3] === void 0 ? null : m[3];
+                const key = title && title.replace(/\[\[([^\]|]+)\]\]/g, (_, lt) => {
+                  const { item: item2 } = plugin.resolveTarget(lt, sourcePath, parsed);
+                  return `[[${(item2 && refText(item2)) ?? lt}]]`;
+                });
+                b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(plugin, m[2], plugin.langOf(parsed), title, key, sourcePath) }));
                 continue;
               }
               const { item } = plugin.resolveTarget(m[1], sourcePath, parsed);
@@ -636,7 +758,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   }
 };
 function signature(p) {
-  return [...p.callouts.map((c) => `${c.line}:${c.number}`), ...p.equations.map((e) => `${e.line}:${e.number}`), p.lang].join(",");
+  return [...p.callouts, ...p.equations, ...p.headings].map((i) => `${i.line}:${i.number}`).concat(p.lang).join(",");
 }
 function quoteEnd(doc, line) {
   let end = line;
@@ -669,6 +791,18 @@ function applyEquationLabel(el) {
     span.addClass("theorem-eq-label-inline");
   }
   el.after(span);
+}
+function pairHeadings(root, items) {
+  const els = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6"));
+  if (root.matches("h1, h2, h3, h4, h5, h6")) els.unshift(root);
+  els.filter((h) => !h.closest("blockquote, .callout")).forEach((h, k) => {
+    const number = items[k]?.number;
+    let span = h.querySelector(":scope > .theorem-heading-number");
+    if (!number) return span?.remove();
+    span ?? (span = createSpan({ cls: "theorem-heading-number" }));
+    span.setText(number);
+    if (span.parentElement !== h) h.insertBefore(span, h.querySelector(":scope > .heading-collapse-indicator")?.nextSibling ?? h.firstChild);
+  });
 }
 function holdUntilScrolled(doc) {
   const observer = new MutationObserver((records) => {
@@ -709,16 +843,33 @@ function proofSpan(kind, lang) {
   return span;
 }
 var ProofWidget = class extends import_view.WidgetType {
-  constructor(kind, lang) {
+  constructor(plugin, kind, lang, title, key, sourcePath) {
     super();
+    this.plugin = plugin;
     this.kind = kind;
     this.lang = lang;
+    this.title = title;
+    this.key = key;
+    this.sourcePath = sourcePath;
   }
   eq(o) {
-    return o.kind === this.kind && o.lang === this.lang;
+    return o.kind === this.kind && o.lang === this.lang && o.key === this.key && o.sourcePath === this.sourcePath;
+  }
+  toDOM(view) {
+    if (this.title === null) return proofSpan(this.kind, this.lang);
+    return this.plugin.proofCaption(this.title, this.lang, this.sourcePath, () => this.plugin.parseDoc(view.state.doc), "editor");
+  }
+};
+var HeadingNumberWidget = class extends import_view.WidgetType {
+  constructor(number) {
+    super();
+    this.number = number;
+  }
+  eq(o) {
+    return o.number === this.number;
   }
   toDOM() {
-    return proofSpan(this.kind, this.lang);
+    return createSpan({ cls: "theorem-heading-number", text: this.number });
   }
 };
 var RefWidget = class extends import_view.WidgetType {
@@ -732,28 +883,8 @@ var RefWidget = class extends import_view.WidgetType {
   eq(o) {
     return o.text === this.text && o.linktext === this.linktext && o.sourcePath === this.sourcePath;
   }
-  toDOM() {
-    const span = createSpan({ cls: "theorem-ref theorem-ref-editor", text: this.text });
-    const current = () => {
-      const view = import_view.EditorView.findFromDOM(span);
-      return view ? this.plugin.parseDoc(view.state.doc) : null;
-    };
-    const parent = { hoverPopover: null };
-    span.addEventListener("mousedown", (e) => {
-      e.stopPropagation();
-      if (e.button !== 0) return;
-      e.preventDefault();
-      this.plugin.openRef(e, this.linktext, this.sourcePath, current());
-    });
-    span.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-    });
-    span.addEventListener("mouseover", (e) => {
-      e.stopPropagation();
-      this.plugin.hoverRef(e, span, parent, "editor", this.linktext, this.sourcePath, current());
-    });
-    return span;
+  toDOM(view) {
+    return this.plugin.refEl(this.text, this.linktext, this.sourcePath, () => this.plugin.parseDoc(view.state.doc), "editor");
   }
   ignoreEvent() {
     return true;

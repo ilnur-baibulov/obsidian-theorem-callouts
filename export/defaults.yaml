@@ -1,0 +1,25 @@
+# Pandoc defaults for a PDF of an Obsidian note written for Theorem Callouts.
+#   pandoc note.md -o note.pdf --defaults path/to/export/defaults.yaml
+# Paths below are relative to the folder pandoc runs in; make them absolute
+# (or point the Obsidian Pandoc plugin at this file) to use it from anywhere.
+
+# Read notes the way Obsidian does: CommonMark, a single newline is a line break.
+from: commonmark_x+hard_line_breaks-superscript-subscript
+
+pdf-engine: xelatex
+
+# Where embedded images are looked for, besides the note's folder.
+resource-path:
+  - '.'
+
+variables:
+  geometry: margin=1in
+  fontsize: 11pt
+  documentclass: article
+  mainfont: Times New Roman
+  mathfont: STIX Two Math
+
+include-in-header: 'export/header.tex'
+
+filters:
+  - 'export/theorem-callouts.lua'
