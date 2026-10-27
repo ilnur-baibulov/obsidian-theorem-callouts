@@ -395,6 +395,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
         state = { scroll: eq.line };
       }
     }
+    if (state) holdUntilScrolled(targetEl.doc);
     this.app.workspace.trigger("hover-link", { event: e, source, hoverParent: parent, targetEl, linktext, sourcePath, state });
   }
   /** Reading view: Obsidian handles internal links itself, so equation links are taken over before it sees the events. */
@@ -668,6 +669,27 @@ function applyEquationLabel(el) {
     span.addClass("theorem-eq-label-inline");
   }
   el.after(span);
+}
+function holdUntilScrolled(doc) {
+  const observer = new MutationObserver((records) => {
+    const el = records.flatMap((r) => Array.from(r.addedNodes)).find((n) => n instanceof HTMLElement && n.matches(".popover.hover-popover"));
+    if (!el) return;
+    observer.disconnect();
+    el.addClass("theorem-hover-pending");
+    const show = () => {
+      window.clearTimeout(timer);
+      el.removeClass("theorem-hover-pending");
+    };
+    const timer = window.setTimeout(show, 1e3);
+    const poll = () => {
+      if (!el.hasClass("theorem-hover-pending")) return;
+      if (el.querySelector(".is-flashing")) show();
+      else requestAnimationFrame(poll);
+    };
+    poll();
+  });
+  observer.observe(doc.body, { childList: true, subtree: true });
+  window.setTimeout(() => observer.disconnect(), 1e3);
 }
 function applyEquationNumber(el, eq) {
   const existing = el.querySelector(":scope > .theorem-eq-number");

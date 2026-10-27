@@ -160,6 +160,7 @@ export default class TheoremCallouts extends Plugin {
 			if (callout?.label) linktext = `${target.file.path}#^${callout.label}`;
 			else { linktext = target.file.path; state = { scroll: eq.line }; }
 		}
+		if (state) holdUntilScrolled(targetEl.doc);
 		this.app.workspace.trigger("hover-link", { event: e, source, hoverParent: parent, targetEl, linktext, sourcePath, state });
 	}
 
@@ -445,6 +446,28 @@ function applyEquationLabel(el: HTMLElement) {
 		span.addClass("theorem-eq-label-inline");
 	}
 	el.after(span);
+}
+
+/** Obsidian renders a previewed note from the top and scrolls to the line afterwards, highlighting it,
+ *  so the next popover is kept hidden until the highlight appears. */
+function holdUntilScrolled(doc: Document) {
+	const observer = new MutationObserver(records => {
+		const el = records.flatMap(r => Array.from(r.addedNodes))
+			.find((n): n is HTMLElement => n instanceof HTMLElement && n.matches(".popover.hover-popover"));
+		if (!el) return;
+		observer.disconnect();
+		el.addClass("theorem-hover-pending");
+		const show = () => { window.clearTimeout(timer); el.removeClass("theorem-hover-pending"); };
+		const timer = window.setTimeout(show, 1000);
+		const poll = () => {
+			if (!el.hasClass("theorem-hover-pending")) return;
+			if (el.querySelector(".is-flashing")) show();
+			else requestAnimationFrame(poll);
+		};
+		poll();
+	});
+	observer.observe(doc.body, { childList: true, subtree: true });
+	window.setTimeout(() => observer.disconnect(), 1000); // Obsidian shows a popover after 300 ms
 }
 
 function applyEquationNumber(el: HTMLElement, eq: EquationItem) {

@@ -46,3 +46,6 @@
 /* A reference in Live Preview: drawn by the plugin, not as an Obsidian link, but looks like one. */
 .theorem-ref-editor { color: var(--link-color); text-decoration-line: var(--link-decoration); cursor: var(--cursor-link, pointer); }
 .theorem-ref-editor:hover { color: var(--link-color-hover); text-decoration-line: var(--link-decoration-hover); }
+
+/* A page preview of an equation is shown once it has been scrolled to the equation. */
+.popover.hover-popover.theorem-hover-pending { visibility: hidden; }
