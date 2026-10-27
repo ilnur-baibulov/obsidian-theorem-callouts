@@ -1,6 +1,6 @@
 {
   "name": "theorem-callouts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Numbered theorem callouts, number-only references and proof markers for Obsidian.",
   "main": "main.js",
   "scripts": {
