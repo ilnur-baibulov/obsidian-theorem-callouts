@@ -40,7 +40,7 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `unnumbered: [References]` | these headings, and those under them, stay without a number |
 | `appendix: Proofs` | from this heading on, sections are **Appendix A.**, **Appendix B.**, subsections `A.1`; `[[#Proofs]]` shows `A` |
 
-Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
+Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias. A labelled equation is written on one line, `$$…$$ ^eq-trace`, because Obsidian closes a multi-line `$$` block only on a line that holds `$$` alone, so a label there breaks the rendering.
 
 Sections are numbered three levels deep, from the top heading level used in the note; a `#` heading that opens the note is its title and stays unnumbered, unless there are other `#` headings. The key `numbersections` is pandoc's own, so the PDF numbers the same sections; the appendix is set with the LaTeX package `appendix`.
 
@@ -71,7 +71,7 @@ If Math Booster is enabled, disable it, otherwise captions are processed twice.
 
 Reading view and Live Preview, including references to other notes. Source mode shows the raw markup.
 
-Clicking an equation reference opens the note at the equation, also when it spans several lines or sits inside a callout; Ctrl/Cmd-click opens it in a new tab. Hovering shows Obsidian's page preview of the equation, or of the labelled callout it sits in, or of the note at the equation; as with any link, the editor needs Ctrl/Cmd by default.
+Clicking an equation reference opens the note at the equation, also when it sits inside a callout; Ctrl/Cmd-click opens it in a new tab. Hovering shows Obsidian's page preview of the equation, or of the labelled callout it sits in, or of the note at the equation; as with any link, the editor needs Ctrl/Cmd by default.
 
 ## PDF export
 
