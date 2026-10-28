@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseNote, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod } from "../src/parse.ts";
+import { parseNote, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod, headingCaption } from "../src/parse.ts";
 
 const note = `---
 created: 2026-10-19
@@ -127,4 +127,27 @@ test("short type names", () => {
 	const p = parseNote("> [!thm] главная\n> Текст.\n^thm-a\n\n> [!lem]\n> Текст.\n\n> [!note]\n> Не теорема.");
 	assert.deepEqual(p.callouts.map(c => `${c.type}:${c.number}`), ["theorem:1", "lemma:2"]);
 	assert.equal(refText(p.labels.get("thm-a")!), "1");
+});
+
+test("unnumbered sections and the appendix", () => {
+	const p = parseNote(`---
+numbersections: true
+unnumbered: [Благодарности, "Литература"]
+appendix: Доказательства лемм
+---
+## Благодарности
+### Подраздел благодарностей
+## Введение
+### Обозначения
+## Доказательства лемм
+### Лемма о следе
+## Таблицы
+## Литература
+`);
+	assert.deepEqual(p.headings.map(h => h.number), [null, null, "1", "1.1", "A", "A.1", "B", null]);
+	assert.equal(headingCaption(p.headings[4], "ru"), "Приложение A.");
+	assert.equal(headingCaption(p.headings[5], "ru"), "A.1");
+	assert.equal(refText(p.headings[4]), "A");
+	const q = parseNote("---\nnumbersections: true\nunnumbered:\n  - Итог\n---\n## Начало\n## Итог\n");
+	assert.deepEqual(q.headings.map(h => h.number), ["1", null]);
 });

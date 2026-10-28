@@ -8,7 +8,7 @@ import {
 import { RangeSetBuilder, StateEffect, Text } from "@codemirror/state";
 import {
 	parseNote, ParsedNote, CalloutItem, EquationItem, HeadingItem, Item, Lang,
-	PROOF, theoremType, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
+	PROOF, theoremType, refText, headingCaption, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
 
@@ -257,7 +257,7 @@ export default class TheoremCallouts extends Plugin {
 				items.filter(i => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
 			this.pairCallouts(el, inRange(parsed.callouts), lang);
 			this.pairEquations(el, inRange(parsed.equations));
-			pairHeadings(el, inRange(parsed.headings));
+			pairHeadings(el, inRange(parsed.headings), lang);
 			hideEquationLabels(el, parsed);
 		}
 		const current = info ? parsed : null;
@@ -429,7 +429,8 @@ export default class TheoremCallouts extends Plugin {
 						const heading = headings.get(n - 1);
 						if (heading) {
 							const at = line.from + /^#+\s*/.exec(line.text)![0].length;
-							b.add(at, at, Decoration.widget({ widget: new HeadingNumberWidget(heading.number!), side: -1 }));
+							const caption = headingCaption(heading, plugin.langOf(parsed))!;
+							b.add(at, at, Decoration.widget({ widget: new HeadingNumberWidget(caption), side: -1 }));
 						}
 						re.lastIndex = 0;
 						let m: RegExpExecArray | null;
@@ -508,11 +509,11 @@ function applyEquationLabel(el: HTMLElement) {
 }
 
 /** Reading view: section numbers before headings, which are paired with the parsed ones in order. */
-function pairHeadings(root: HTMLElement, items: HeadingItem[]) {
+function pairHeadings(root: HTMLElement, items: HeadingItem[], lang: Lang) {
 	const els = Array.from(root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"));
 	if (root.matches("h1, h2, h3, h4, h5, h6")) els.unshift(root);
 	els.filter(h => !h.closest("blockquote, .callout")).forEach((h, k) => {
-		const number = items[k]?.number;
+		const number = items[k] && headingCaption(items[k], lang);
 		let span = h.querySelector<HTMLElement>(":scope > .theorem-heading-number");
 		if (!number) return span?.remove();
 		span ??= createSpan({ cls: "theorem-heading-number" });

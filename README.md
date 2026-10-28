@@ -37,10 +37,12 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `` `\begin{proof}` ``, `` `\end{proof}` `` | *Proof.* … □ |
 | `` `\begin{proof}[Proof of Lemma [[#^lem-a]]]` `` | *Proof of Lemma 3.* — your own caption; references show numbers, `$…$` is rendered, a period is added if missing |
 | `numbersections: true` in the frontmatter | headings numbered `1`, `2.1`, `2.1.1`; `[[#Heading]]` shows `2.1` |
+| `unnumbered: [References]` | these headings, and those under them, stay without a number |
+| `appendix: Proofs` | from this heading on, sections are **Appendix A.**, **Appendix B.**, subsections `A.1`; `[[#Proofs]]` shows `A` |
 
 Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias.
 
-Sections are numbered three levels deep, from the top heading level used in the note; a `#` heading that opens the note is its title and stays unnumbered, unless there are other `#` headings. The key is pandoc's own, so the PDF numbers the same sections.
+Sections are numbered three levels deep, from the top heading level used in the note; a `#` heading that opens the note is its title and stays unnumbered, unless there are other `#` headings. The key `numbersections` is pandoc's own, so the PDF numbers the same sections; the appendix is set with the LaTeX package `appendix`.
 
 Captions are in Russian or English. The language is taken from `lang: ru` / `lang: en` in the frontmatter, otherwise detected from the note's prose (math and links are ignored).
 
@@ -91,7 +93,7 @@ This plugin exists because of [LaTeX-like Theorem & Equation Referencer](https:/
 - the proof environment written as `` `\begin{proof}` `` … `` `\end{proof}` ``, and its own caption, `` `\begin{proof}[…]` ``;
 - the plain caption style, «**Theorem 3** (title).», and the `theorem-callout-*` CSS classes.
 
-Theorem Callouts reads his markup, so a vault written for Math Booster opens here without conversion, and a reader can move back to his plugin at any time. In Math Booster, links show the statement's name instead of the link text through [MathLinks](https://github.com/zhaoshenzhai/obsidian-mathlinks) by Zhaoshen Zhai, which deserves credit for that idea too.
+Theorem Callouts reads his markup, so a vault written for Math Booster opens here without conversion. In Math Booster, links show the statement's name instead of the link text through [MathLinks](https://github.com/zhaoshenzhai/obsidian-mathlinks) by Zhaoshen Zhai, which deserves credit for that idea too.
 
 What is different is the implementation. The TypeScript code is written from scratch and covers numbering, references and proofs; the original also has a vault-wide index, search, link autocomplete and profiles. The plain caption style in `styles.css` is adapted from Math Booster's `styles/plain.scss`; its copyright notice is reproduced in `LICENSE`. The original's last release, 2.2.0, came out in December 2023, and users report that it fails to load in recent versions of Obsidian ([#258](https://github.com/RyotaUshio/obsidian-latex-theorem-equation-referencer/issues/258), [#260](https://github.com/RyotaUshio/obsidian-latex-theorem-equation-referencer/issues/260)).
 
@@ -104,10 +106,12 @@ A note written for Math Booster with its default settings renders here different
 - Every labelled equation is numbered, whether or not something refers to it; a multi-line `align` gets one number, not one per line.
 - Not supported: the linked proof `` `\begin{proof}`@[[…]] ``, `%% display: … %%` comments, the version 1 header `[!math|{…}]`, profiles and per-note settings.
 
-## Plans
+## Roadmap
 
 - Autocomplete: typing `\ref` lists the numbered statements and equations of the note and of the vault, and inserts the link, adding a label where there is none; a command to search them.
 - Numbering statements within sections: «Theorem 2.3».
+- A setting for what a reference shows: the number only, as now, or «Theorem 3», «Theorem 3 (title)», as in Math Booster.
+- A command that moves an English note from Math Booster: it writes the type word before each reference, «see [[#^thm-a]]» → «see Theorem [[#^thm-a]]».
 
 ## Development
 

@@ -36,6 +36,14 @@ export const NAMES: Record<Lang, Record<TheoremType, string>> = {
 	},
 };
 
+export const APPENDIX: Record<Lang, string> = { ru: "Приложение", en: "Appendix" };
+
+/** Number shown before a heading: «2.1», and «Приложение A.» for a section of the appendix. */
+export function headingCaption(h: HeadingItem, lang: Lang): string | null {
+	if (h.number === null) return null;
+	return h.appendix && !h.number.includes(".") ? `${APPENDIX[lang]} ${h.number}.` : h.number;
+}
+
 export const PROOF: Record<Lang, { begin: string; end: string }> = {
 	ru: { begin: "Доказательство.", end: "□" },
 	en: { begin: "Proof.", end: "□" },
@@ -66,7 +74,8 @@ export interface HeadingItem {
 	line: number;
 	level: number;         // number of '#'
 	text: string;
-	number: string | null; // "2.1" when the note has `numbersections: true`
+	number: string | null; // "2.1" when the note has `numbersections: true`; "A", "A.1" in the appendix
+	appendix: boolean;
 }
 
 export type Item = CalloutItem | EquationItem | HeadingItem;
@@ -113,17 +122,47 @@ export function detectLang(text: string, frontmatterLang?: string): Lang {
 	return cyr >= lat && cyr > 0 ? "ru" : "en";
 }
 
-function frontmatter(lines: string[]): { lang?: string; numberSections: boolean; end: number } {
-	if (lines[0] !== "---") return { numberSections: false, end: 0 };
+interface Frontmatter {
+	lang?: string;
+	numberSections: boolean;
+	unnumbered: string[]; // headings left without a number
+	appendix?: string;    // heading from which top-level sections are lettered
+	end: number;
+}
+
+const unquote = (v: string) => v.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+
+/** Value of a YAML key: a scalar, `[a, b]`, or a block list `- a` on the following lines. */
+function yamlValues(body: string[], key: string): string[] {
+	const k = body.findIndex(l => l.startsWith(key + ":"));
+	if (k < 0) return [];
+	const v = body[k].slice(key.length + 1).trim();
+	if (v.startsWith("[")) return v.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
+	if (v) return [unquote(v)];
+	const items: string[] = [];
+	for (const l of body.slice(k + 1)) {
+		const m = /^\s+-\s+(.*)$/.exec(l);
+		if (!m) break;
+		items.push(unquote(m[1]));
+	}
+	return items;
+}
+
+function frontmatter(lines: string[]): Frontmatter {
+	if (lines[0] !== "---") return { numberSections: false, unnumbered: [], end: 0 };
 	for (let i = 1; i < lines.length; i++) {
 		if (lines[i] === "---") {
 			const body = lines.slice(1, i);
-			const lang = body.map(l => /^lang:\s*(.+)$/.exec(l)).find(Boolean)?.[1];
-			const numberSections = body.some(l => /^numbersections:\s*true\s*$/i.test(l));
-			return { lang, numberSections, end: i + 1 };
+			return {
+				lang: yamlValues(body, "lang")[0],
+				numberSections: /^true$/i.test(yamlValues(body, "numbersections")[0] ?? ""),
+				unnumbered: yamlValues(body, "unnumbered"),
+				appendix: yamlValues(body, "appendix")[0],
+				end: i + 1,
+			};
 		}
 	}
-	return { numberSections: false, end: 0 };
+	return { numberSections: false, unnumbered: [], end: 0 };
 }
 
 /** Heading text as links compare it: case and runs of spaces do not matter. */
@@ -203,7 +242,7 @@ export function parseNote(text: string): ParsedNote {
 
 		const hd = quoteDepth(line) === 0 ? HEADING.exec(line) : null;
 		if (hd) {
-			headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null });
+			headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null, appendix: false });
 			lastBlock = null;
 			continue;
 		}
@@ -238,26 +277,40 @@ export function parseNote(text: string): ParsedNote {
 		e.number = String(++eqCounter);
 	}
 
-	if (fm.numberSections) numberHeadings(headings, lines, fm.end);
+	if (fm.numberSections) numberHeadings(headings, lines, fm);
 
 	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, codeLines };
 }
 
 /** Numbers sections as LaTeX does, three levels deep. A `#` heading that opens the note is its title
- *  (the PDF export takes it so) unless there are other `#` headings; the top remaining level is the section. */
-function numberHeadings(headings: HeadingItem[], lines: string[], start: number) {
+ *  (the PDF export takes it so) unless there are other `#` headings; the top remaining level is the section.
+ *  Headings listed in `unnumbered` stay without a number, with everything under them; from the `appendix`
+ *  heading on, sections are lettered A, B and their subsections A.1. */
+function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatter) {
 	let list = headings;
-	const first = lines.slice(start).findIndex(l => l.trim() !== "") + start;
+	const first = lines.slice(fm.end).findIndex(l => l.trim() !== "") + fm.end;
 	if (list[0]?.level === 1 && list[0].line === first && !list.slice(1).some(h => h.level === 1)) list = list.slice(1);
 	if (!list.length) return;
 	const top = Math.min(...list.map(h => h.level));
+	const unnumbered = new Set(fm.unnumbered.map(headingKey));
+	const appendix = fm.appendix === undefined ? null : headingKey(fm.appendix);
 	const counters = [0, 0, 0];
+	let inAppendix = false;
+	let skipBelow = 0; // level of an unnumbered heading whose subsections are skipped too, or 0
 	for (const h of list) {
+		if (skipBelow && h.level > skipBelow) continue;
+		skipBelow = 0;
+		const key = headingKey(h.text);
+		if (unnumbered.has(key)) { skipBelow = h.level; continue; }
 		const depth = h.level - top;
+		if (depth === 0 && key === appendix && !inAppendix) { inAppendix = true; counters.fill(0); }
 		if (depth > 2) continue;
 		counters[depth]++;
 		counters.fill(0, depth + 1);
-		h.number = counters.slice(0, depth + 1).join(".");
+		const parts = counters.slice(0, depth + 1).map(String);
+		if (inAppendix) parts[0] = String.fromCharCode(64 + counters[0]);
+		h.number = parts.join(".");
+		h.appendix = inAppendix;
 	}
 }
 

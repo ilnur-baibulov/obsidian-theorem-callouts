@@ -12,6 +12,7 @@
 --   `\begin{proof}` / `\end{proof}` -> amsthm proof
 --   `\begin{proof}[Proof of [[#^thm]]]` -> the same with its own caption
 --   numbersections: true      -> numbered sections; [[#Heading]] -> \ref, [[Note#Heading]] -> its number
+--   unnumbered: [Heading]     -> \section*;  appendix: Heading -> appendices «Приложение A» from it on
 --   The first # heading becomes the title; the language (ru/en) comes from `lang:` or the prose.
 --   Notes of other files are looked up in the vault: the nearest folder above the input file
 --   that contains `.obsidian`, or $OBSIDIAN_VAULT.
@@ -155,11 +156,24 @@ local function heading_key(inlines)
   return pandoc.text.lower(pandoc.utils.stringify(inlines)):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
 end
 
+-- Strings of a metadata value: a scalar or a list.
+local function meta_strings(v)
+  if v == nil then return {} end
+  if pandoc.utils.type(v) == "List" then
+    local out = {}
+    for _, x in ipairs(v) do out[#out + 1] = pandoc.utils.stringify(x) end
+    return out
+  end
+  return { pandoc.utils.stringify(v) }
+end
+
 -- Section numbers as the plugin shows them: with `numbersections: true`, three levels deep, the top level
 -- present being the section; a # heading that opens the note is its title unless there are other # headings.
--- Returns heading key -> number.
+-- Headings listed in `unnumbered` stay without a number, with everything under them; from the `appendix`
+-- heading on, sections are lettered A, B and their subsections A.1.
+-- Returns heading key -> number, the set of unnumbered keys, and the key of the first appendix heading.
 local function number_headings(doc)
-  if doc.meta.numbersections ~= true then return {} end
+  if doc.meta.numbersections ~= true then return {}, {}, nil end
   local list = {}
   for _, b in ipairs(doc.blocks) do if b.t == "Header" then list[#list + 1] = b end end
   if list[1] and list[1].level == 1 and doc.blocks[1] == list[1] then
@@ -167,18 +181,35 @@ local function number_headings(doc)
     for k = 2, #list do if list[k].level == 1 then other = true end end
     if not other then table.remove(list, 1) end
   end
+  local listed = {}
+  for _, h in ipairs(meta_strings(doc.meta.unnumbered)) do listed[heading_key(pandoc.Inlines(h))] = true end
+  local appendix = doc.meta.appendix and heading_key(pandoc.Inlines(pandoc.utils.stringify(doc.meta.appendix)))
   local top = math.huge
   for _, h in ipairs(list) do top = math.min(top, h.level) end
-  local out, counters = {}, { 0, 0, 0 }
+  local out, skipped, counters = {}, {}, { 0, 0, 0 }
+  local in_appendix, first_appendix, skip_below = false, nil, nil
   for _, h in ipairs(list) do
-    local depth = h.level - top + 1
-    if depth <= 3 then
-      counters[depth] = counters[depth] + 1
-      for k = depth + 1, 3 do counters[k] = 0 end
-      out[heading_key(h.content)] = table.concat(counters, ".", 1, depth)
+    local key = heading_key(h.content)
+    if skip_below and h.level > skip_below then skipped[key] = true
+    else
+      skip_below = nil
+      local depth = h.level - top + 1
+      if listed[key] then skipped[key] = true; skip_below = h.level
+      else
+        if depth == 1 and key == appendix and not in_appendix then
+          in_appendix, first_appendix, counters = true, key, { 0, 0, 0 }
+        end
+        if depth <= 3 then
+          counters[depth] = counters[depth] + 1
+          for k = depth + 1, 3 do counters[k] = 0 end
+          local parts = { table.unpack(counters, 1, depth) }
+          if in_appendix then parts[1] = string.char(64 + counters[1]) end
+          out[key] = table.concat(parts, ".")
+        end
+      end
     end
   end
-  return out
+  return out, skipped, first_appendix
 end
 
 -- macOS returns file names in NFD (й = и + U+0306, ё = е + U+0308); links in the text are NFC.
@@ -217,7 +248,7 @@ local function external_number(note, label)
         local text = f:read("a"); f:close()
         local doc = pandoc.read(text, READER)
         numbers = number_labels(doc.blocks)
-        for key, n in pairs(number_headings(doc)) do numbers["#" .. key] = n end
+        for key, n in pairs((number_headings(doc))) do numbers["#" .. key] = n end
       end
     end
     note_cache[note] = numbers
@@ -437,7 +468,7 @@ function Pandoc(doc)
   lang = detect_lang(doc)
   doc.meta.lang = pandoc.MetaString(lang)
 
-  local sections = number_headings(doc)
+  local sections, skipped, appendix = number_headings(doc)
 
   -- The first level-1 heading becomes the title; the remaining headings move up one level.
   -- With numbered sections it is the title only if it is the only # heading, as in the plugin.
@@ -453,9 +484,10 @@ function Pandoc(doc)
   end
 
   -- Sections: the top level present becomes \section, three levels are numbered, as in the plugin.
-  if next(sections) then
+  if next(sections) or next(skipped) then
     local top = math.huge
     for _, b in ipairs(doc.blocks) do if b.t == "Header" then top = math.min(top, b.level) end end
+    local blocks = pandoc.List()
     for _, b in ipairs(doc.blocks) do
       if b.t == "Header" then
         b.level = b.level - top + 1
@@ -465,8 +497,18 @@ function Pandoc(doc)
           b.identifier = "sec-" .. sections[key]
           local_sections[key] = local_sections[key] or b.identifier
         end
+        if skipped[key] then
+          b.classes:insert("unnumbered")
+          -- An unnumbered section after the appendix, such as the references, is not part of it.
+          if appendix == "open" and b.level == 1 then blocks:insert(pandoc.RawBlock("latex", "\\end{appendices}")); appendix = "closed" end
+        end
+        -- The appendix package prints «Приложение A» before the title and in the contents.
+        if key == appendix and b.level == 1 then blocks:insert(pandoc.RawBlock("latex", "\\begin{appendices}")); appendix = "open" end
       end
+      blocks:insert(b)
     end
+    if appendix == "open" then blocks:insert(pandoc.RawBlock("latex", "\\end{appendices}")) end
+    doc.blocks = blocks
     if not doc.meta.secnumdepth then doc.meta.secnumdepth = pandoc.MetaString("3") end
   end
 

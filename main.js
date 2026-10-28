@@ -94,6 +94,11 @@ var NAMES = {
     hypothesis: "Hypothesis"
   }
 };
+var APPENDIX = { ru: "\u041F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435", en: "Appendix" };
+function headingCaption(h, lang) {
+  if (h.number === null) return null;
+  return h.appendix && !h.number.includes(".") ? `${APPENDIX[lang]} ${h.number}.` : h.number;
+}
 var PROOF = {
   ru: { begin: "\u0414\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E.", end: "\u25A1" },
   en: { begin: "Proof.", end: "\u25A1" }
@@ -120,17 +125,36 @@ function detectLang(text, frontmatterLang) {
   const lat = (prose.match(/[A-Za-z]/g) ?? []).length;
   return cyr >= lat && cyr > 0 ? "ru" : "en";
 }
+var unquote = (v) => v.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+function yamlValues(body, key) {
+  const k = body.findIndex((l) => l.startsWith(key + ":"));
+  if (k < 0) return [];
+  const v = body[k].slice(key.length + 1).trim();
+  if (v.startsWith("[")) return v.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
+  if (v) return [unquote(v)];
+  const items = [];
+  for (const l of body.slice(k + 1)) {
+    const m = /^\s+-\s+(.*)$/.exec(l);
+    if (!m) break;
+    items.push(unquote(m[1]));
+  }
+  return items;
+}
 function frontmatter(lines) {
-  if (lines[0] !== "---") return { numberSections: false, end: 0 };
+  if (lines[0] !== "---") return { numberSections: false, unnumbered: [], end: 0 };
   for (let i = 1; i < lines.length; i++) {
     if (lines[i] === "---") {
       const body = lines.slice(1, i);
-      const lang = body.map((l) => /^lang:\s*(.+)$/.exec(l)).find(Boolean)?.[1];
-      const numberSections = body.some((l) => /^numbersections:\s*true\s*$/i.test(l));
-      return { lang, numberSections, end: i + 1 };
+      return {
+        lang: yamlValues(body, "lang")[0],
+        numberSections: /^true$/i.test(yamlValues(body, "numbersections")[0] ?? ""),
+        unnumbered: yamlValues(body, "unnumbered"),
+        appendix: yamlValues(body, "appendix")[0],
+        end: i + 1
+      };
     }
   }
-  return { numberSections: false, end: 0 };
+  return { numberSections: false, unnumbered: [], end: 0 };
 }
 function headingKey(text) {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
@@ -208,7 +232,7 @@ function parseNote(text) {
     }
     const hd = quoteDepth(line) === 0 ? HEADING.exec(line) : null;
     if (hd) {
-      headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null });
+      headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null, appendix: false });
       lastBlock = null;
       continue;
     }
@@ -247,22 +271,40 @@ function parseNote(text) {
     }
     e.number = String(++eqCounter);
   }
-  if (fm.numberSections) numberHeadings(headings, lines, fm.end);
+  if (fm.numberSections) numberHeadings(headings, lines, fm);
   return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, codeLines };
 }
-function numberHeadings(headings, lines, start) {
+function numberHeadings(headings, lines, fm) {
   let list = headings;
-  const first = lines.slice(start).findIndex((l) => l.trim() !== "") + start;
+  const first = lines.slice(fm.end).findIndex((l) => l.trim() !== "") + fm.end;
   if (list[0]?.level === 1 && list[0].line === first && !list.slice(1).some((h) => h.level === 1)) list = list.slice(1);
   if (!list.length) return;
   const top = Math.min(...list.map((h) => h.level));
+  const unnumbered = new Set(fm.unnumbered.map(headingKey));
+  const appendix = fm.appendix === void 0 ? null : headingKey(fm.appendix);
   const counters = [0, 0, 0];
+  let inAppendix = false;
+  let skipBelow = 0;
   for (const h of list) {
+    if (skipBelow && h.level > skipBelow) continue;
+    skipBelow = 0;
+    const key = headingKey(h.text);
+    if (unnumbered.has(key)) {
+      skipBelow = h.level;
+      continue;
+    }
     const depth = h.level - top;
+    if (depth === 0 && key === appendix && !inAppendix) {
+      inAppendix = true;
+      counters.fill(0);
+    }
     if (depth > 2) continue;
     counters[depth]++;
     counters.fill(0, depth + 1);
-    h.number = counters.slice(0, depth + 1).join(".");
+    const parts = counters.slice(0, depth + 1).map(String);
+    if (inAppendix) parts[0] = String.fromCharCode(64 + counters[0]);
+    h.number = parts.join(".");
+    h.appendix = inAppendix;
   }
 }
 function refText(item) {
@@ -551,7 +593,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       const inRange = (items) => items.filter((i) => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
       this.pairCallouts(el, inRange(parsed.callouts), lang);
       this.pairEquations(el, inRange(parsed.equations));
-      pairHeadings(el, inRange(parsed.headings));
+      pairHeadings(el, inRange(parsed.headings), lang);
       hideEquationLabels(el, parsed);
     }
     const current = info ? parsed : null;
@@ -729,7 +771,8 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
             const heading = headings.get(n - 1);
             if (heading) {
               const at = line.from + /^#+\s*/.exec(line.text)[0].length;
-              b.add(at, at, import_view.Decoration.widget({ widget: new HeadingNumberWidget(heading.number), side: -1 }));
+              const caption = headingCaption(heading, plugin.langOf(parsed));
+              b.add(at, at, import_view.Decoration.widget({ widget: new HeadingNumberWidget(caption), side: -1 }));
             }
             re.lastIndex = 0;
             let m;
@@ -792,11 +835,11 @@ function applyEquationLabel(el) {
   }
   el.after(span);
 }
-function pairHeadings(root, items) {
+function pairHeadings(root, items, lang) {
   const els = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6"));
   if (root.matches("h1, h2, h3, h4, h5, h6")) els.unshift(root);
   els.filter((h) => !h.closest("blockquote, .callout")).forEach((h, k) => {
-    const number = items[k]?.number;
+    const number = items[k] && headingCaption(items[k], lang);
     let span = h.querySelector(":scope > .theorem-heading-number");
     if (!number) return span?.remove();
     span ?? (span = createSpan({ cls: "theorem-heading-number" }));
