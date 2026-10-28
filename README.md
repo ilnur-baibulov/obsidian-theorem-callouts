@@ -111,7 +111,6 @@ A note written for Math Booster with its default settings renders here different
 - Autocomplete: typing `\ref` lists the numbered statements and equations of the note and of the vault, and inserts the link, adding a label where there is none; a command to search them.
 - Numbering statements within sections: «Theorem 2.3».
 - A setting for what a reference shows: the number only, as now, or «Theorem 3», «Theorem 3 (title)», as in Math Booster.
-- A command that moves an English note from Math Booster: it writes the type word before each reference, «see [[#^thm-a]]» → «see Theorem [[#^thm-a]]».
 
 ## Development
 
