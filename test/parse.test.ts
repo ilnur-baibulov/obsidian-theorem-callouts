@@ -161,6 +161,24 @@ test("short type names", () => {
 	assert.equal(refText(p.labels.get("thm-a")!), "1");
 });
 
+test("appendix", () => {
+	const src = `---
+numbersections: true
+---
+## Введение
+### Обозначения
+## Приложение. Доказательства
+^app-proofs
+### Лемма о следе
+## Таблицы
+## Литература
+`;
+	const p = parseNote(src, { ...DEFAULT_SECTIONS, appendix: true });
+	assert.deepEqual(p.headings.map(h => h.number), ["1", "1.1", "A", "A.1", "B", null]);
+	assert.equal(refText(p.labels.get("app-proofs")!), "A");
+	assert.deepEqual(parseNote(src).headings.map(h => h.number), ["1", "1.1", "2", "2.1", "3", null]);
+});
+
 test("a label inside a quote attaches to the callout nested there", () => {
 	const p = parseNote("> [!note]- Дополнения\n> Текст.\n>\n> > [!lemma]\n> > Утверждение.\n>\n> ^lem-x\n\n> [!theorem]\n> Т.\n^thm-y\n");
 	assert.equal(refText(p.labels.get("lem-x")!), "1");

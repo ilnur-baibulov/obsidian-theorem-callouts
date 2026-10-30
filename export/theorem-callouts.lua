@@ -14,6 +14,7 @@
 --   numbersections: true / false -> numbered sections or not, otherwise the plugin's setting
 --   # Heading + ^name below   -> \label{name}; [[#^name]] -> \ref, [[Note#^name]] -> its number
 --   # Heading + ^- or ^-name  -> \section*; [[#^name]] -> the heading's text
+--   # Heading + ^app-name     -> \appendix before it, with the plugin's Appendix setting on
 --   [[#Heading]]              -> the heading's text
 --   thcl-title-heading: true  -> the heading that opens the note becomes the title
 --   The language (ru/en) comes from `lang:` or the prose.
@@ -64,7 +65,7 @@ local VAULT = find_vault()
 
 -- The plugin's settings, so that the PDF numbers sections as the plugin does.
 local function load_settings()
-  local s = { numberSections = false, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
+  local s = { numberSections = false, appendix = false, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
   local f = io.open(VAULT .. "/.obsidian/plugins/theorem-callouts/data.json", "r")
   if f then
     local ok, d = pcall(pandoc.json.decode, f:read("a"), false)
@@ -76,7 +77,7 @@ local function load_settings()
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
     if name ~= "" then list[#list + 1] = name end
   end
-  return { numberSections = s.numberSections == true, titleHeading = s.titleHeading == true, unnumbered = list }
+  return { numberSections = s.numberSections == true, appendix = s.appendix == true, titleHeading = s.titleHeading == true, unnumbered = list }
 end
 local SETTINGS = load_settings()
 
@@ -198,14 +199,15 @@ end
 -- Section numbers as the plugin shows them: three levels deep, the top level present being the section.
 -- A heading with `^-` below, or listed in the setting and without a label, stays without a number,
 -- with everything under it. Returns, by block index, the number and the label of each heading
--- (`^-name` gives the label `name`), and the unnumbered ones.
+-- (`^-name` gives the label `name`), the unnumbered ones, and the index of the heading that starts
+-- the appendix: with the Appendix setting on, `^app-name` below a top-level heading; sections are lettered from it.
 local function number_headings(blocks, on)
   local nums, labels, off = {}, {}, {}
   local listed = {}
   for _, h in ipairs(SETTINGS.unnumbered) do listed[heading_key(pandoc.Inlines(h))] = true end
   local top = math.huge
   for _, b in ipairs(blocks) do if b.t == "Header" then top = math.min(top, b.level) end end
-  local counters, skip_below = { 0, 0, 0 }, nil
+  local counters, skip_below, appendix = { 0, 0, 0 }, nil, nil
   for i, h in ipairs(blocks) do
     if h.t == "Header" then
       local lab = label_of(blocks[i + 1])
@@ -218,15 +220,20 @@ local function number_headings(blocks, on)
       else
         skip_below = nil
         local depth = h.level - top + 1
+        if SETTINGS.appendix and depth == 1 and not appendix and lab and lab:match("^app%-") then
+          appendix, counters = i, { 0, 0, 0 }
+        end
         if depth <= 3 then
           counters[depth] = counters[depth] + 1
           for k = depth + 1, 3 do counters[k] = 0 end
-          nums[i] = table.concat({ table.unpack(counters, 1, depth) }, ".")
+          local parts = { table.unpack(counters, 1, depth) }
+          if appendix then parts[1] = string.char(64 + counters[1]) end
+          nums[i] = table.concat(parts, ".")
         end
       end
     end
   end
-  return nums, labels, off
+  return nums, labels, off, appendix
 end
 
 -- macOS returns file names in NFD (й = и + U+0306, ё = е + U+0308); links in the text are NFC.
@@ -495,11 +502,12 @@ function Pandoc(doc)
 
   -- Sections: the top level present becomes \section, three levels are numbered, as in the plugin.
   -- A label below a heading becomes its identifier, and the label line is dropped.
-  local nums, labels, off = number_headings(doc.blocks, on)
+  local nums, labels, off, appendix = number_headings(doc.blocks, on)
   local top = math.huge
   for _, b in ipairs(doc.blocks) do if b.t == "Header" then top = math.min(top, b.level) end end
   local blocks = pandoc.List()
   for i, b in ipairs(doc.blocks) do
+    if i == appendix then blocks:insert(pandoc.RawBlock("latex", "\\appendix")) end
     if b.t == "Header" then
       b.level = b.level - top + 1
       if off[i] then b.classes:insert("unnumbered") end

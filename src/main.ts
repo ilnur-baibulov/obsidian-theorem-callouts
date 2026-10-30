@@ -63,6 +63,7 @@ export default class TheoremCallouts extends Plugin {
 	sections(): SectionOptions {
 		return {
 			numberSections: this.settings.numberSections,
+			appendix: this.settings.appendix,
 			titleHeading: this.settings.titleHeading,
 			unnumbered: this.settings.unnumbered.split(",").map(n => n.trim()).filter(Boolean),
 		};

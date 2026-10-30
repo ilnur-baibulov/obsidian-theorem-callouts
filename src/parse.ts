@@ -67,7 +67,7 @@ export interface HeadingItem {
 	line: number;
 	level: number;         // number of '#'
 	text: string;
-	number: string | null; // "2.1" when sections are numbered
+	number: string | null; // "2.1" when sections are numbered; "A", "A.1" in the appendix
 	label: string | null;  // `^name` on the line below; `^-name` gives the label `name`
 	off: boolean;          // `^-` or `^-name` below: no number
 }
@@ -88,12 +88,14 @@ export interface ParsedNote {
 /** How sections are numbered when a note does not say: from the plugin's settings. */
 export interface SectionOptions {
 	numberSections: boolean; // in notes without `numbersections` in the frontmatter
+	appendix: boolean;       // `^app-name` below a top-level heading starts the appendix
 	titleHeading: boolean; // the heading that opens a note is its title
 	unnumbered: string[];  // headings left without a number in every note
 }
 
 export const DEFAULT_SECTIONS: SectionOptions = {
 	numberSections: false,
+	appendix: false,
 	titleHeading: false,
 	unnumbered: ["References", "Bibliography", "Литература", "Список литературы"],
 };
@@ -319,7 +321,8 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 /** Numbers sections as LaTeX does, three levels deep, from the top heading level used. With `thcl-title-heading`
  *  (or the setting) the heading that opens the note is its title and has no number; the PDF export takes it so.
  *  A heading with `^-` below, or listed in the setting and without a label, stays without a number,
- *  with everything under it. */
+ *  with everything under it. With the appendix setting on, `^app-name` below a top-level heading starts the appendix:
+ *  from it on sections are lettered A, B, as after `\appendix` in LaTeX. */
 function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatter, opts: SectionOptions) {
 	let list = headings;
 	const first = lines.slice(fm.end).findIndex(l => l.trim() !== "") + fm.end;
@@ -329,15 +332,19 @@ function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatte
 	const unnumbered = new Set(opts.unnumbered.map(headingKey));
 	const counters = [0, 0, 0];
 	let skipBelow = 0; // level of an unnumbered heading whose subsections are skipped too, or 0
+	let inAppendix = false;
 	for (const h of list) {
 		if (skipBelow && h.level > skipBelow) continue;
 		skipBelow = 0;
 		if (h.off || (!h.label && unnumbered.has(headingKey(h.text)))) { skipBelow = h.level; continue; }
 		const depth = h.level - top;
+		if (opts.appendix && depth === 0 && !inAppendix && h.label?.startsWith("app-")) { inAppendix = true; counters.fill(0); }
 		if (depth > 2) continue;
 		counters[depth]++;
 		counters.fill(0, depth + 1);
-		h.number = counters.slice(0, depth + 1).join(".");
+		const parts = counters.slice(0, depth + 1).map(String);
+		if (inAppendix) parts[0] = String.fromCharCode(64 + counters[0]);
+		h.number = parts.join(".");
 	}
 }
 

@@ -100,6 +100,7 @@ var PROOF = {
 };
 var DEFAULT_SECTIONS = {
   numberSections: false,
+  appendix: false,
   titleHeading: false,
   unnumbered: ["References", "Bibliography", "\u041B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u0430", "\u0421\u043F\u0438\u0441\u043E\u043A \u043B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u044B"]
 };
@@ -308,6 +309,7 @@ function numberHeadings(headings, lines, fm, opts) {
   const unnumbered = new Set(opts.unnumbered.map(headingKey));
   const counters = [0, 0, 0];
   let skipBelow = 0;
+  let inAppendix = false;
   for (const h of list) {
     if (skipBelow && h.level > skipBelow) continue;
     skipBelow = 0;
@@ -316,10 +318,16 @@ function numberHeadings(headings, lines, fm, opts) {
       continue;
     }
     const depth = h.level - top;
+    if (opts.appendix && depth === 0 && !inAppendix && h.label?.startsWith("app-")) {
+      inAppendix = true;
+      counters.fill(0);
+    }
     if (depth > 2) continue;
     counters[depth]++;
     counters.fill(0, depth + 1);
-    h.number = counters.slice(0, depth + 1).join(".");
+    const parts = counters.slice(0, depth + 1).map(String);
+    if (inAppendix) parts[0] = String.fromCharCode(64 + counters[0]);
+    h.number = parts.join(".");
   }
 }
 function refText(item) {
@@ -355,6 +363,7 @@ var DEFAULT_SETTINGS = {
   language: "auto",
   plainStyle: true,
   numberSections: DEFAULT_SECTIONS.numberSections,
+  appendix: DEFAULT_SECTIONS.appendix,
   titleHeading: DEFAULT_SECTIONS.titleHeading,
   unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
   renameAsk: false
@@ -379,6 +388,10 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
     new import_obsidian.Setting(containerEl).setName("Sections").setHeading();
     new import_obsidian.Setting(containerEl).setName("Number sections").setDesc("Number the headings of every note: \xAB1\xBB, \xAB2.1\xBB. `numbersections: true` / `false` in a note's frontmatter wins. `^-` on the line below a heading leaves it without a number; a label `^name` there lets `[[#^name]]` show the number.").addToggle((t) => t.setValue(s.numberSections).onChange((v) => {
       s.numberSections = v;
+      this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Appendix").setDesc("A label `^app-name` on the line below a top-level heading starts the appendix: from that heading on, sections are lettered A, B, subsections A.1, and `[[#^app-name]]` shows \xABA\xBB. The word \xABAppendix\xBB is not added; write it in the heading if you want it. Off: `^app-name` is an ordinary label.").addToggle((t) => t.setValue(s.appendix).onChange((v) => {
+      s.appendix = v;
       this.plugin.saveSettings();
     }));
     new import_obsidian.Setting(containerEl).setName("First heading is the title").setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.titleHeading).onChange((v) => {
@@ -624,6 +637,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   sections() {
     return {
       numberSections: this.settings.numberSections,
+      appendix: this.settings.appendix,
       titleHeading: this.settings.titleHeading,
       unnumbered: this.settings.unnumbered.split(",").map((n) => n.trim()).filter(Boolean)
     };

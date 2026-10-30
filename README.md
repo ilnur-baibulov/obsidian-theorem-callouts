@@ -39,11 +39,12 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `numbersections: true` / `false` in the frontmatter | headings numbered `1`, `2.1`, `2.1.1`, or not, whatever the setting says |
 | `^sec-est` on the line below a heading | `[[#^sec-est]]` shows `2.1`; a heading from the unnumbered list gets a number |
 | `^-` or `^-sec-est` below a heading | no number, also for the headings under it; `[[#^sec-est]]` shows the heading's text |
+| `^app-proofs` below a top-level heading, with the setting **Appendix** on | from this heading on, sections are lettered `A`, `B`, subsections `A.1`; `[[#^app-proofs]]` shows `A` |
 | `thcl-title-heading: true` | the heading that opens the note is its title and gets no number |
 
 Types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them; for a callout nested in another one, such as a folded `> [!note]-`, the label goes inside the outer callout, `> ^lem-a`. A label starting with `-` is the plugin's: `^-` leaves a section without a number. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias. A labelled equation is written on one line, `$$…$$ ^eq-trace`, because Obsidian closes a multi-line `$$` block only on a line that holds `$$` alone, so a label there breaks the rendering.
 
-Sections are numbered three levels deep, from the top heading level used in the note. A section is referred to as a statement is, by a label: Obsidian gives a block id on the line below a heading to the heading itself and hides it in reading view. Such a reference does not break when the heading is renamed, and when `^sec-est` becomes `^-sec-est` it shows the heading's text instead of the number. A link to a heading by its name, `[[#Estimates]]`, stays an ordinary Obsidian link. Obsidian does not update such links when the heading is renamed; the command **Rename heading**, run with the cursor on a heading, renames it and updates the links to it in the vault. An appendix is an ordinary section: write the word in the heading, `## Appendix. Proofs`, and put `^-` below it. The keys of the plugin's own start with `thcl-`, so that they do not mix with other keys in the frontmatter; `numbersections` and `lang` are pandoc's and mean the same there, so the PDF numbers the same sections (`thcl-numbersections` works too).
+Sections are numbered three levels deep, from the top heading level used in the note. A section is referred to as a statement is, by a label: Obsidian gives a block id on the line below a heading to the heading itself and hides it in reading view. Such a reference does not break when the heading is renamed, and when `^sec-est` becomes `^-sec-est` it shows the heading's text instead of the number. A link to a heading by its name, `[[#Estimates]]`, stays an ordinary Obsidian link. Obsidian does not update such links when the heading is renamed; the command **Rename heading**, run with the cursor on a heading, renames it and updates the links to it in the vault. The appendix is lettered as after `\appendix` in LaTeX, and the word «Appendix» is not added: write it in the heading if you want it. The keys of the plugin's own start with `thcl-`, so that they do not mix with other keys in the frontmatter; `numbersections` and `lang` are pandoc's and mean the same there, so the PDF numbers the same sections (`thcl-numbersections` works too).
 
 Captions are in Russian or English. The language is taken from `lang: ru` / `lang: en` in the frontmatter, otherwise detected from the note's prose (math and links are ignored).
 
@@ -68,6 +69,7 @@ If Math Booster is enabled, disable it, otherwise captions are processed twice.
 - **Caption language**: language of «Theorem», «Proof» for notes without `lang:` in the frontmatter. By default it is detected from the note's prose.
 - **Plain style** (on by default): theorem callouts without box and icon, with a bold caption. Turn it off to keep Obsidian's usual callout look.
 - **Number sections** (off by default): number the headings of every note; `numbersections` in a note wins.
+- **Appendix** (off by default): a label `^app-name` below a top-level heading starts the appendix. Off, such a label is an ordinary one.
 - **First heading is the title** (off by default): in a note with numbered sections, the heading that opens the note is its title and gets no number. `thcl-title-heading` in a note wins.
 - **Unnumbered headings** (by default `References, Bibliography, Литература, Список литературы`): headings that get no number unless a label stands below them.
 - **Offer to update references after a heading is edited** (off by default): when the cursor leaves a heading you have edited, the plugin asks whether to update the links to its old name, as the command **Rename heading** does.
@@ -115,7 +117,7 @@ A note written for Math Booster with its default settings renders here different
 
 - Autocomplete: typing `\ref` lists the numbered statements and equations of the note and of the vault, and inserts the link, adding a label where there is none; a command to search them.
 - Numbering statements within sections: «Theorem 2.3».
-- Other numbering styles: letters for an appendix, «Appendix A», «A.1», and a number style per section.
+- Other numbering styles: «Appendix A» as the caption of an appendix, and a number style per section.
 - A setting for what a reference shows: the number only, as now, or «Theorem 3», «Theorem 3 (title)», as in Math Booster.
 - Caption words in the settings, one table per language («Theorem», «Proof», «Appendix»), so that a note in any language gets its own captions.
 

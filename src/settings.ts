@@ -6,6 +6,7 @@ export interface TheoremSettings {
 	language: "auto" | "ru" | "en";  // used when the note has no `lang:` in its frontmatter
 	plainStyle: boolean;
 	numberSections: boolean; // in notes without `numbersections` in the frontmatter
+	appendix: boolean;       // `^app-name` below a top-level heading starts the appendix
 	titleHeading: boolean; // with numbered sections, the heading that opens a note is its title
 	unnumbered: string;    // comma-separated headings left without a number
 	renameAsk: boolean;    // after a heading is edited, offer to update the references to it
@@ -15,6 +16,7 @@ export const DEFAULT_SETTINGS: TheoremSettings = {
 	language: "auto",
 	plainStyle: true,
 	numberSections: DEFAULT_SECTIONS.numberSections,
+	appendix: DEFAULT_SECTIONS.appendix,
 	titleHeading: DEFAULT_SECTIONS.titleHeading,
 	unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
 	renameAsk: false,
@@ -46,6 +48,11 @@ export class TheoremSettingTab extends PluginSettingTab {
 			.addToggle(t => t
 				.setValue(s.numberSections)
 				.onChange(v => { s.numberSections = v; this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName("Appendix")
+			.setDesc("A label `^app-name` on the line below a top-level heading starts the appendix: from that heading on, sections are lettered A, B, subsections A.1, and `[[#^app-name]]` shows «A». The word «Appendix» is not added; write it in the heading if you want it. Off: `^app-name` is an ordinary label.")
+			.addToggle(t => t
+				.setValue(s.appendix)
+				.onChange(v => { s.appendix = v; this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName("First heading is the title")
 			.setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.")
 			.addToggle(t => t
