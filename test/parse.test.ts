@@ -110,7 +110,7 @@ numbersections: true
 	assert.deepEqual(p.headings.map(h => `${h.text}:${h.number}`),
 		["Заголовок заметки:null", "Введение:1", "Оценки:2", "Малый  след:2.1", "Слишком глубоко:2.1.1", "Итог:3"]);
 	// The note's own key overrides the setting.
-	const own = parseNote(src.replace("---\n#", "thcl-title-heading: false\n---\n#"), { ...DEFAULT_SECTIONS, titleHeading: true });
+	const own = parseNote(src.replace("---\n#", "thm-title-heading: false\n---\n#"), { ...DEFAULT_SECTIONS, titleHeading: true });
 	assert.deepEqual(own.headings.slice(0, 3).map(h => h.number), ["1", "1.1", "1.2"]);
 	assert.equal(parseNote(src).headings[0].number, "1");
 	// A link to a heading by name stays an ordinary link.
@@ -232,6 +232,23 @@ $$y$$ ^eq-b
 	assert.equal(refText(p.labels.get("eq-a")!), "(1.1)");
 	assert.deepEqual(parseNote(src).callouts.map(c => c.number), ["1", "2", "3", "4"]);
 	// The note's own key overrides the setting.
-	assert.equal(parseNote(src.replace("---\n>", "thcl-number-within: true\n---\n>")).callouts[1].number, "1.1");
-	assert.equal(parseNote(src.replace("---\n>", "thcl-number-within: false\n---\n>"), { ...DEFAULT_SECTIONS, numberWithin: true }).callouts[1].number, "2");
+	assert.equal(parseNote(src.replace("---\n>", "thm-numberwithin: true\n---\n>")).callouts[1].number, "1.1");
+	assert.equal(parseNote(src.replace("---\n>", "thm-numberwithin: false\n---\n>"), { ...DEFAULT_SECTIONS, numberWithin: true }).callouts[1].number, "2");
+});
+
+test("comments, a callout inside a quote, CRLF, a comment in YAML, label lines", () => {
+	const nums = (t: string, o = DEFAULT_SECTIONS) => parseNote(t, o).callouts.map(c => c.number);
+	// What `%%…%%` hides gets no number: a comment of several lines, one of one line, and the text around one.
+	assert.deepEqual(nums("%%\n> [!lemma]\n> x\n%%\n\n%% > [!lemma] %%\n\nтекст %%\n> [!lemma]\n%%\n\n> [!lemma]\n> y"), ["1"]);
+	assert.deepEqual(nums("```\n%%\n```\n> [!lemma]\n> y"), ["1"]);
+	// `> [!theorem]` on a later line of a quote is its text; a nested callout still counts.
+	const p = parseNote("> [!lemma]\n> a\n> [!theorem]\n> b\n\n^lem-a\n\n> [!remark]\n>> [!example]\n>> c\n\n> [!lemma]\n> d");
+	assert.deepEqual(p.callouts.map(c => `${c.type}:${c.number}`), ["lemma:1", "remark:2", "example:3", "lemma:4"]);
+	assert.equal(p.labels.get("lem-a")?.line, 0);
+	const crlf = parseNote("---\r\nlang: ru\r\n---\r\n> [!lemma]\r\n> x\r\n\r\n^lem-a\r\n");
+	assert.equal(crlf.lang, "ru");
+	assert.equal(crlf.labels.get("lem-a")?.number, "1");
+	const on = { ...DEFAULT_SECTIONS, numberSections: true };
+	assert.equal(parseNote("---\nnumbersections: false # here not\n---\n## A", on).headings[0].number, null);
+	assert.deepEqual([...parseNote("## A\n^-\n\n## B\n\n^-sec-b\n\n> [!lemma]\n> x\n^lem-x\n\n$$y$$\n^eq-y").labelLines], [1, 5, 9, 12]);
 });

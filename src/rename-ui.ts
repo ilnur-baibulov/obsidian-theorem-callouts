@@ -63,6 +63,12 @@ export function renameCommand(plugin: TheoremCallouts) {
 				const lineText = editor.getLine(line);
 				const self = editor.getValue().split("\n");
 				self[line] = lineText.replace(h[2], name);
+				// Links of the old name point to the first heading of that name; with another one left, they stay.
+				if (self.some(l => { const d = HEADING.exec(l); return d && headingKey(d[2]) === headingKey(h[2]); })) {
+					setText(editor, self.join("\n"));
+					new Notice(`Theorem Callouts: another heading «${h[2]}» is in the note, so links to it are left as they are.`);
+					return;
+				}
 				await apply(plugin.app, await plan(plugin.app, file, self.join("\n"), h[2], name), editor, file);
 			}).open();
 			return true;

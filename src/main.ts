@@ -218,7 +218,8 @@ export default class TheoremCallouts extends Plugin {
 	/** A reference drawn by the plugin, not as an Obsidian link: Obsidian previews and follows those itself,
 	 *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
 	refEl(text: string, linktext: string, sourcePath: string, current: () => ParsedNote | null, source: "preview" | "editor"): HTMLElement {
-		const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+		const span = createSpan({ cls: "theorem-ref theorem-ref-link" });
+		fillInline(span, text);
 		span.toggleClass("theorem-ref-missing", text === "??");
 		const parent: HoverParent = { hoverPopover: null };
 		span.addEventListener("mousedown", e => {
@@ -251,7 +252,7 @@ export default class TheoremCallouts extends Plugin {
 				const { item, parsed } = this.resolveTarget(linktext, sourcePath, current());
 				const shown = item && this.shown(item, parsed);
 				const ref = span.appendChild(this.refEl(shown ?? "…", linktext, sourcePath, current, source));
-				if (!shown) this.locate(linktext, sourcePath, current()).then(t => ref.setText((t && this.shown(t.item, t.parsed)) ?? "??"));
+				if (!shown) this.locate(linktext, sourcePath, current()).then(t => fillInline(ref, (t && this.shown(t.item, t.parsed)) ?? "??"));
 			}
 		}
 		span.appendText(text.slice(pos));
@@ -345,11 +346,13 @@ export default class TheoremCallouts extends Plugin {
 			const href = a.getAttribute("data-href") ?? "";
 			const lt = parseLinktext(href);
 			if (!lt) return;
-			const aliased = !(a.textContent ?? "").includes(lt.label); // the link has its own alias
+			// Without an alias Obsidian shows the link itself, `^label` or `Note > ^label`.
+			const text = (a.textContent ?? "").trim();
+			const aliased = text !== href && !text.endsWith(`^${lt.label}`);
 			const set = (item: Item | null, target: ParsedNote | null) => {
 				if (item?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
 				const t = item && this.shown(item, target);
-				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); }
+				if (t && !aliased) { fillInline(a, t); a.addClass("theorem-ref"); }
 			};
 			const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
 			if (item || !pending) return set(item, parsed);
@@ -457,8 +460,7 @@ export default class TheoremCallouts extends Plugin {
 					for (let n = start; n <= stop; n++) {
 						if (parsed.codeLines.has(n - 1)) continue;
 						const line = view.state.doc.line(n);
-						const lab = /^\^([A-Za-z0-9_-]+)\s*$/.exec(line.text);
-						if (lab && parsed.labels.has(lab[1])) {
+						if (parsed.labelLines.has(n - 1)) {
 							b.add(line.from, line.from, Decoration.line({ class: "theorem-label-line" }));
 							continue;
 						}
@@ -499,6 +501,18 @@ export default class TheoremCallouts extends Plugin {
 
 function signature(p: ParsedNote): string {
 	return [...p.callouts, ...p.equations, ...p.headings].map(i => `${i.line}:${i.number}`).concat(p.lang).join(",");
+}
+
+/** Text of a reference: `$…$` is rendered, Markdown marks of emphasis and links are dropped, as a heading's text
+ *  or a statement's title may have them. */
+function fillInline(el: HTMLElement, text: string) {
+	el.empty();
+	let math = false;
+	for (const part of text.split(/(\$[^$]+\$)/)) {
+		if (/^\$[^$]+\$$/.test(part)) { el.appendChild(renderMath(part.slice(1, -1), false)); math = true; }
+		else el.appendText(part.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").replace(/\*\*|__|==|~~|[*`]/g, ""));
+	}
+	if (math) finishRenderMath();
 }
 
 /** Last line of the quote block that starts at `line` (0-based). */

@@ -80,13 +80,13 @@ export class TheoremSettingTab extends PluginSettingTab {
 			.setDesc("Number the headings of every note: «1», «2.1». `numbersections: true` / `false` in a note's frontmatter wins. `^-` on the line below a heading leaves it without a number; a label `^name` there lets `[[#^name]]` show the number.")
 			.addToggle(t => t.setValue(s.numberSections).onChange(v => { s.numberSections = v; save(); }));
 		new Setting(containerEl).setName("Number statements within sections")
-			.setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: «Theorem 2.3», «(2.1)». `thcl-number-within: true` / `false` in a note's frontmatter wins.")
+			.setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: «Theorem 2.3», «(2.1)». `thm-numberwithin: true` / `false` in a note's frontmatter wins.")
 			.addToggle(t => t.setValue(s.numberWithin).onChange(v => { s.numberWithin = v; save(); }));
 		new Setting(containerEl).setName("Appendix")
 			.setDesc("A label `^app-name` on the line below a top-level heading starts the appendix: from that heading on, sections are lettered A, B, subsections A.1, and `[[#^app-name]]` shows «A». The word «Appendix» is not added; write it in the heading if you want it. Off: `^app-name` is an ordinary label.")
 			.addToggle(t => t.setValue(s.appendix).onChange(v => { s.appendix = v; save(); }));
 		new Setting(containerEl).setName("First heading is the title")
-			.setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.")
+			.setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thm-title-heading: true` / `false` in a note's frontmatter wins.")
 			.addToggle(t => t.setValue(s.titleHeading).onChange(v => { s.titleHeading = v; save(); }));
 		new Setting(containerEl).setName("Unnumbered headings")
 			.setDesc("Headings that get no number, separated by commas, unless a label `^name` stands below them.")
@@ -151,6 +151,7 @@ export class TheoremSettingTab extends PluginSettingTab {
 				const t = this.newType;
 				if (!/^[a-z]+$/.test(t)) return new Notice("A type is written in Latin letters: problem.");
 				if (t in STYLES || t in TYPE_ALIASES || t in s.types) return new Notice(`${t} is already a type.`);
+				if (t === "proof") return new Notice("A proof is written `\\begin{proof}`, not as a callout; its word is in the table above.");
 				if (OBSIDIAN_CALLOUTS.includes(t)) return new Notice(`${t} is one of Obsidian's own callouts.`);
 				s.types[t] = this.newStyle;
 				this.newType = "";

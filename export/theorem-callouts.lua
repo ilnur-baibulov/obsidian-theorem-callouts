@@ -16,9 +16,10 @@
 --   # Heading + ^- or ^-name  -> \section*; [[#^name]] -> the heading's text
 --   # Heading + ^app-name     -> \appendix before it, with the plugin's Appendix setting on
 --   [[#Heading]]              -> the heading's text
---   thcl-title-heading: true  -> the heading that opens the note becomes the title
---   thcl-number-within: true  -> statements and equations numbered within sections, \numberwithin
---   The language (ru/en) comes from `lang:` or the prose.
+--   thm-title-heading: true   -> the heading that opens the note becomes the title
+--   thm-numberwithin: true    -> statements and equations numbered within sections, \numberwithin
+--   %% comment %%             -> dropped, as Obsidian does not show it
+--   The language comes from `lang:`, then the plugin's caption language, then the prose (ru/en).
 --   Notes of other files are looked up in the vault: the nearest folder above the input file
 --   that contains `.obsidian`, or $OBSIDIAN_VAULT. The plugin's settings (numbered sections,
 --   first heading as the title, unnumbered headings) are read from the vault's .obsidian/plugins/theorem-callouts/data.json.
@@ -66,7 +67,7 @@ local VAULT = find_vault()
 
 -- The plugin's settings, so that the PDF numbers sections as the plugin does.
 local function load_settings()
-  local s = { numberSections = false, appendix = false, numberWithin = false, refShows = "number", words = {}, types = {}, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
+  local s = { language = "auto", numberSections = false, appendix = false, numberWithin = false, refShows = "number", words = {}, types = {}, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
   local f = io.open(VAULT .. "/.obsidian/plugins/theorem-callouts/data.json", "r")
   if f then
     local ok, d = pcall(pandoc.json.decode, f:read("a"), false)
@@ -78,7 +79,7 @@ local function load_settings()
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
     if name ~= "" then list[#list + 1] = name end
   end
-  return { numberSections = s.numberSections == true, appendix = s.appendix == true, numberWithin = s.numberWithin == true,
+  return { language = tostring(s.language), numberSections = s.numberSections == true, appendix = s.appendix == true, numberWithin = s.numberWithin == true,
     refShows = s.refShows, words = type(s.words) == "table" and s.words or {}, types = type(s.types) == "table" and s.types or {},
     titleHeading = s.titleHeading == true, unnumbered = list }
 end
@@ -150,6 +151,7 @@ local function detect_lang(doc)
   for l in pairs(NAMES) do
     if meta_lang == l or meta_lang:sub(1, #l + 1) == l .. "-" then return l end
   end
+  if rawget(NAMES, SETTINGS.language) then return SETTINGS.language end
   local parts = {}
   doc:walk({ Str = function(s) parts[#parts + 1] = s.text end })
   local text = table.concat(parts, " ")
@@ -206,22 +208,22 @@ end
 
 -- `numbersections` in the note, otherwise the plugin's setting.
 local function numbered(doc)
-  for _, k in ipairs({ "numbersections", "thcl-numbersections" }) do
+  for _, k in ipairs({ "numbersections", "thm-numbersections" }) do
     if type(doc.meta[k]) == "boolean" then return doc.meta[k] end
   end
   return SETTINGS.numberSections
 end
 
--- `thcl-number-within` in the note, otherwise the plugin's setting.
+-- `thm-numberwithin` in the note, otherwise the plugin's setting.
 local function number_within(doc)
-  local v = doc.meta["thcl-number-within"]
+  local v = doc.meta["thm-numberwithin"]
   if type(v) == "boolean" then return v end
   return SETTINGS.numberWithin
 end
 
--- `thcl-title-heading` in the note, otherwise the plugin's setting.
+-- `thm-title-heading` in the note, otherwise the plugin's setting.
 local function title_heading(doc)
-  local v = doc.meta["thcl-title-heading"]
+  local v = doc.meta["thm-title-heading"]
   if type(v) == "boolean" then return v end
   return SETTINGS.titleHeading
 end
@@ -267,6 +269,30 @@ local function number_headings(blocks, on)
 end
 
 -- macOS returns file names in NFD (й = и + U+0306, ё = е + U+0308); links in the text are NFC.
+-- Obsidian's comments `%%…%%` are not shown, so they are dropped; fenced code is left as it is.
+-- An unclosed `%%` comments out the rest, as in Obsidian.
+local function strip_comments(text)
+  if not text:find("%%%%") then return text end
+  local out, chunk, fence = {}, {}, nil
+  local function flush()
+    local t = table.concat(chunk, "\n"):gsub("%%%%.-%%%%", ""):gsub("%%%%.*$", "")
+    out[#out + 1] = t; chunk = {}
+  end
+  for line in (text:gsub("\r\n", "\n") .. "\n"):gmatch("(.-)\n") do
+    local f = line:gsub("^[%s>]*", ""):match("^([`~][`~][`~]+)")
+    if fence then
+      out[#out + 1] = line
+      if f and f:sub(1, 1) == fence:sub(1, 1) and #f >= #fence then fence = nil end
+    elseif f then
+      flush(); fence = f; out[#out + 1] = line
+    else
+      chunk[#chunk + 1] = line
+    end
+  end
+  flush()
+  return table.concat(out, "\n")
+end
+
 local function nfc(s)
   return (s:gsub("и\204\134", "й"):gsub("И\204\134", "Й"):gsub("е\204\136", "ё"):gsub("Е\204\136", "Ё"))
 end
@@ -300,7 +326,7 @@ local function external_number(note, label)
       local f = io.open(path, "r")
       if f then
         local text = f:read("a"); f:close()
-        local doc = pandoc.read(text, READER)
+        local doc = pandoc.read(strip_comments(text), READER)
         if doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then doc.blocks:remove(1) end
         local nums, labels = number_headings(doc.blocks, numbered(doc))
         local kinds
@@ -314,7 +340,7 @@ local function external_number(note, label)
             numbers[lab] = name
           end
         end
-        for i, lab in pairs(labels) do numbers[lab] = nums[i] or pandoc.utils.stringify(doc.blocks[i].content) end
+        for i, lab in pairs(labels) do numbers[lab] = nums[i] or doc.blocks[i].content end
       end
     end
     note_cache[note] = numbers
@@ -335,7 +361,7 @@ local function wikilink(content)
   if heading and not label and not alias then return pandoc.Str(heading) end
   if label and not alias then
     if note == "" then
-      if local_texts[label] then return pandoc.Str(local_texts[label]) end
+      if local_texts[label] then return pandoc.Span(local_texts[label]) end
       local shown = local_labels[label]
       local kind = local_kinds[label]
       if shown and kind and SETTINGS.refShows ~= "number" then
@@ -347,7 +373,9 @@ local function wikilink(content)
       if shown then return pandoc.RawInline("latex", (shown:match("^%(") and "\\eqref{" or "\\ref{") .. label .. "}") end
       return pandoc.Str("??")
     end
-    return pandoc.Str(external_number(note, label) or "??")
+    -- A number, or the inlines of a heading without a number.
+    local shown = external_number(note, label) or "??"
+    return type(shown) == "string" and pandoc.Str(shown) or pandoc.Span(shown)
   end
   if alias then return pandoc.Str(alias) end
   local shown = target:gsub("#%^?.*$", ""):match("([^/]+)$") or target
@@ -535,13 +563,20 @@ local function theorem_header(within)
 end
 
 function Pandoc(doc)
+  local input = PANDOC_STATE.input_files
+  if #input == 1 and input[1] ~= "-" then
+    local f = io.open(input[1], "r")
+    local text = f and f:read("a")
+    if f then f:close() end
+    if text and text:find("%%%%") then doc.blocks = pandoc.read(strip_comments(text), READER).blocks end
+  end
   lang = detect_lang(doc)
   doc.meta.lang = pandoc.MetaString(lang)
 
   local on = numbered(doc)
   doc.meta.numbersections = on
 
-  -- With `thcl-title-heading` (or the setting) the heading that opens the note becomes the title.
+  -- With `thm-title-heading` (or the setting) the heading that opens the note becomes the title.
   if not doc.meta.title and doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then
     doc.meta.title = pandoc.MetaInlines(doc.blocks[1].content)
     doc.blocks:remove(1)
@@ -561,7 +596,7 @@ function Pandoc(doc)
       local lab = labels[i]
       if lab then
         b.identifier = lab
-        if nums[i] then local_labels[lab] = nums[i] else local_texts[lab] = pandoc.utils.stringify(b.content) end
+        if nums[i] then local_labels[lab] = nums[i] else local_texts[lab] = b.content:clone() end
       end
     end
     if not (doc.blocks[i - 1] and doc.blocks[i - 1].t == "Header" and label_of(b)) then blocks:insert(b) end
@@ -578,6 +613,9 @@ function Pandoc(doc)
   doc = doc:walk({ Blocks = process_blocks })
 
   -- \newtheorem is allowed in the body; header-includes would be overridden by include-in-header.
-  doc.blocks:insert(1, theorem_header(on and number_within(doc)))
+  -- Within sections only when there are numbered sections, as in the plugin; otherwise LaTeX would print 0.1.
+  local tops = false
+  for _, n in pairs(nums) do if not n:find("%.") then tops = true end end
+  doc.blocks:insert(1, theorem_header(on and tops and number_within(doc)))
   return doc
 end

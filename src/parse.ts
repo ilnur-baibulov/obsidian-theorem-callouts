@@ -120,7 +120,8 @@ export interface ParsedNote {
 	labels: Map<string, Item>;
 	headings: HeadingItem[];
 	numberSections: boolean;
-	codeLines: Set<number>; // lines inside fenced code blocks
+	codeLines: Set<number>;  // lines inside fenced code blocks and Obsidian's comments `%%…%%`
+	labelLines: Set<number>; // lines of labels attached to a block, `^-` included
 }
 
 /** How sections are numbered when a note does not say: from the plugin's settings. */
@@ -173,7 +174,7 @@ export function detectLang(text: string, frontmatterLang?: string): Lang {
 	return cyr >= lat && cyr > 0 ? "ru" : "en";
 }
 
-// Keys of the plugin's own carry the prefix `thcl-`; `lang` and `numbersections` are pandoc's and mean the same there.
+// Keys of the plugin's own carry the prefix `thm-`; `lang` and `numbersections` are pandoc's and mean the same there.
 interface Frontmatter {
 	lang?: string;
 	numberSections?: boolean;
@@ -188,7 +189,8 @@ export const unquote = (v: string) => v.trim().replace(/^(["'])(.*)\1$/, "$2").t
 function yamlValues(body: string[], key: string): string[] {
 	const k = body.findIndex(l => l.startsWith(key + ":"));
 	if (k < 0) return [];
-	const v = body[k].slice(key.length + 1).trim();
+	// A comment `# …` ends an unquoted value.
+	const v = body[k].slice(key.length + 1).trim().replace(/^([^"'].*?)\s+#.*$/, "$1");
 	if (v.startsWith("[")) return v.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
 	if (v) return [unquote(v)];
 	const items: string[] = [];
@@ -211,9 +213,9 @@ function frontmatter(lines: string[]): Frontmatter {
 			};
 			return {
 				lang: yamlValues(body, "lang")[0],
-				numberSections: flag("numbersections") ?? flag("thcl-numbersections"),
-				titleHeading: flag("thcl-title-heading"),
-				numberWithin: flag("thcl-number-within"),
+				numberSections: flag("numbersections") ?? flag("thm-numbersections"),
+				titleHeading: flag("thm-title-heading"),
+				numberWithin: flag("thm-numberwithin"),
 				end: i + 1,
 			};
 		}
@@ -229,6 +231,7 @@ export function headingKey(text: string): string {
 }
 
 export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS): ParsedNote {
+	text = text.replace(/\r\n/g, "\n");
 	const lines = text.split("\n");
 	const fm = frontmatter(lines);
 	const lang = detectLang(text, fm.lang);
@@ -237,18 +240,24 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 	const labels = new Map<string, Item>();
 	const headings: HeadingItem[] = [];
 	const codeLines = new Set<number>();
+	const labelLines = new Set<number>();
 
-	// Fenced code blocks (also inside quotes) are skipped entirely.
+	// Fenced code blocks (also inside quotes) are skipped entirely, and so are Obsidian's comments `%%…%%`:
+	// a line that starts inside a comment or with `%%`.
 	let fence: string | null = null;
+	let comment = false;
 	for (let i = fm.end; i < lines.length; i++) {
 		const body = stripQuote(lines[i]).trimStart();
 		const m = /^(```+|~~~+)/.exec(body);
 		if (fence) {
 			codeLines.add(i);
 			if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
-		} else if (m) {
+		} else if (m && !comment) {
 			fence = m[1];
 			codeLines.add(i);
+		} else {
+			if (comment || body.startsWith("%%")) codeLines.add(i);
+			if ((lines[i].match(/%%/g) ?? []).length % 2) comment = !comment;
 		}
 	}
 
@@ -271,6 +280,7 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 			if (prev && gapOk && !prev.item.label) {
 				prev.item.label = lab[1];
 				labels.set(lab[1], prev.item);
+				labelLines.add(i);
 			}
 			lastNested.delete(d + 1);
 			continue;
@@ -284,9 +294,11 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 				const off = lab[1].startsWith("-"), name = off ? lab[1].slice(1) : lab[1];
 				lastBlock.off = off;
 				if (name) { lastBlock.label = name; labels.set(name, lastBlock); }
+				labelLines.add(i);
 			} else if (lastBlock && gapOk && !lastBlock.label) {
 				lastBlock.label = lab[1];
 				labels.set(lab[1], lastBlock);
+				labelLines.add(i);
 			}
 			lastBlock = null;
 			continue;
@@ -296,6 +308,8 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 		if (h) {
 			const type = theoremType(h[2]);
 			const depth = (h[1].match(/>/g) ?? []).length;
+			// `> [!lemma]` on a line of a quote that has begun above is text of that quote, as Obsidian shows it.
+			if (i > fm.end && quoteDepth(lines[i - 1]) >= depth) continue;
 			let end = i;
 			while (end + 1 < lines.length && quoteDepth(lines[end + 1]) >= depth) end++;
 			if (type) {
@@ -373,10 +387,10 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 		e.number = nextEq(e.line);
 	}
 
-	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines };
+	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines, labelLines };
 }
 
-/** Numbers sections as LaTeX does, three levels deep, from the top heading level used. With `thcl-title-heading`
+/** Numbers sections as LaTeX does, three levels deep, from the top heading level used. With `thm-title-heading`
  *  (or the setting) the heading that opens the note is its title and has no number; the PDF export takes it so.
  *  A heading with `^-` below, or listed in the setting and without a label, stays without a number,
  *  with everything under it. With the appendix setting on, `^app-name` below a top-level heading starts the appendix:
