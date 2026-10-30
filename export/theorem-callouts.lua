@@ -152,8 +152,10 @@ local function number_labels(blocks)
 end
 
 -- Links compare heading text without regard to case and runs of spaces.
+-- ASCII punctuation does not count, as in the plugin: Obsidian finds a heading without its brackets.
 local function heading_key(inlines)
-  return pandoc.text.lower(pandoc.utils.stringify(inlines)):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  local s = pandoc.text.lower(pandoc.utils.stringify(inlines)):gsub("%p", " "):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  return s
 end
 
 -- Strings of a metadata value: a scalar or a list.
@@ -347,6 +349,8 @@ local function process_inlines(inlines)
         local y = inlines[j]
         if y.t == "Str" then buf = buf .. y.text
         elseif y.t == "Space" or y.t == "SoftBreak" then buf = buf .. " "
+        -- A heading link may contain math: [[#Levels $K_1$]].
+        elseif y.t == "Math" and y.mathtype == "InlineMath" and j > i then buf = buf .. "$" .. y.text .. "$"
         else break end
         if buf:find("%]%]") and select(2, buf:gsub("%[%[", "")) <= select(2, buf:gsub("%]%]", "")) then break end
         j = j + 1

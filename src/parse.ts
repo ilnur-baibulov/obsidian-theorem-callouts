@@ -166,8 +166,10 @@ function frontmatter(lines: string[]): Frontmatter {
 }
 
 /** Heading text as links compare it: case and runs of spaces do not matter. */
+/** Obsidian finds a heading by a link without its brackets and commas, so ASCII punctuation, `$` included,
+ *  does not count. */
 export function headingKey(text: string): string {
-	return text.trim().replace(/\s+/g, " ").toLowerCase();
+	return text.replace(/[!-/:-@[-`{-~]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export function parseNote(text: string): ParsedNote {

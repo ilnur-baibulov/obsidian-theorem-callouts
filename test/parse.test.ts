@@ -114,6 +114,9 @@ numbersections: true
 	assert.equal(refText(findTarget(p, lt)!), "2.1");
 	assert.equal(parseNote(src.replace("numbersections: true", "lang: ru")).headings[1].number, null);
 	assert.equal(parseNote("# A\n# B\n## C").headings.map(h => h.number).join(), ",,");
+	const q = parseNote("---\nnumbersections: true\n---\n## Уровни $K_1$\n## Пример из [PBK, §6.5.2]");
+	assert.equal(refText(findTarget(q, parseLinktext("#Уровни $K_1$")!)!), "1");
+	assert.equal(refText(findTarget(q, parseLinktext("#Пример из PBK §6.5.2")!)!), "2");
 });
 
 test("proof captions", () => {

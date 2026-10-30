@@ -157,7 +157,7 @@ function frontmatter(lines) {
   return { numberSections: false, unnumbered: [], end: 0 };
 }
 function headingKey(text) {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
+  return text.replace(/[!-/:-@[-`{-~]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
 }
 function parseNote(text) {
   const lines = text.split("\n");
