@@ -162,7 +162,7 @@ var unquote = (v) => v.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
 function yamlValues(body, key) {
   const k = body.findIndex((l) => l.startsWith(key + ":"));
   if (k < 0) return [];
-  const v = body[k].slice(key.length + 1).trim();
+  const v = body[k].slice(key.length + 1).trim().replace(/^([^"'].*?)\s+#.*$/, "$1");
   if (v.startsWith("[")) return v.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
   if (v) return [unquote(v)];
   const items = [];
@@ -184,9 +184,9 @@ function frontmatter(lines) {
       };
       return {
         lang: yamlValues(body, "lang")[0],
-        numberSections: flag("numbersections") ?? flag("thcl-numbersections"),
-        titleHeading: flag("thcl-title-heading"),
-        numberWithin: flag("thcl-number-within"),
+        numberSections: flag("numbersections") ?? flag("thm-numbersections"),
+        titleHeading: flag("thm-title-heading"),
+        numberWithin: flag("thm-numberwithin"),
         end: i + 1
       };
     }
@@ -197,6 +197,7 @@ function headingKey(text) {
   return text.replace(/[!-/:-@[-`{-~]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
 }
 function parseNote(text, opts = DEFAULT_SECTIONS) {
+  text = text.replace(/\r\n/g, "\n");
   const lines = text.split("\n");
   const fm = frontmatter(lines);
   const lang = detectLang(text, fm.lang);
@@ -205,16 +206,21 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
   const labels = /* @__PURE__ */ new Map();
   const headings = [];
   const codeLines = /* @__PURE__ */ new Set();
+  const labelLines = /* @__PURE__ */ new Set();
   let fence = null;
+  let comment = false;
   for (let i = fm.end; i < lines.length; i++) {
     const body = stripQuote(lines[i]).trimStart();
     const m = /^(```+|~~~+)/.exec(body);
     if (fence) {
       codeLines.add(i);
       if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
-    } else if (m) {
+    } else if (m && !comment) {
       fence = m[1];
       codeLines.add(i);
+    } else {
+      if (comment || body.startsWith("%%")) codeLines.add(i);
+      if ((lines[i].match(/%%/g) ?? []).length % 2) comment = !comment;
     }
   }
   const auto = /* @__PURE__ */ new Set();
@@ -235,6 +241,7 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
       if (prev && gapOk && !prev.item.label) {
         prev.item.label = lab[1];
         labels.set(lab[1], prev.item);
+        labelLines.add(i);
       }
       lastNested.delete(d + 1);
       continue;
@@ -248,9 +255,11 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
           lastBlock.label = name;
           labels.set(name, lastBlock);
         }
+        labelLines.add(i);
       } else if (lastBlock && gapOk && !lastBlock.label) {
         lastBlock.label = lab[1];
         labels.set(lab[1], lastBlock);
+        labelLines.add(i);
       }
       lastBlock = null;
       continue;
@@ -259,6 +268,7 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
     if (h) {
       const type = theoremType(h[2]);
       const depth = (h[1].match(/>/g) ?? []).length;
+      if (i > fm.end && quoteDepth(lines[i - 1]) >= depth) continue;
       let end = i;
       while (end + 1 < lines.length && quoteDepth(lines[end + 1]) >= depth) end++;
       if (type) {
@@ -350,7 +360,7 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
     }
     e.number = nextEq(e.line);
   }
-  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines };
+  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines, labelLines };
 }
 function numberHeadings(headings, lines, fm, opts) {
   let list = headings;
@@ -500,7 +510,7 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
       s.numberSections = v;
       save();
     }));
-    new import_obsidian.Setting(containerEl).setName("Number statements within sections").setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: \xABTheorem 2.3\xBB, \xAB(2.1)\xBB. `thcl-number-within: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.numberWithin).onChange((v) => {
+    new import_obsidian.Setting(containerEl).setName("Number statements within sections").setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: \xABTheorem 2.3\xBB, \xAB(2.1)\xBB. `thm-numberwithin: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.numberWithin).onChange((v) => {
       s.numberWithin = v;
       save();
     }));
@@ -508,7 +518,7 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
       s.appendix = v;
       save();
     }));
-    new import_obsidian.Setting(containerEl).setName("First heading is the title").setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.titleHeading).onChange((v) => {
+    new import_obsidian.Setting(containerEl).setName("First heading is the title").setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thm-title-heading: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.titleHeading).onChange((v) => {
       s.titleHeading = v;
       save();
     }));
@@ -581,6 +591,7 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
       const t = this.newType;
       if (!/^[a-z]+$/.test(t)) return new import_obsidian.Notice("A type is written in Latin letters: problem.");
       if (t in STYLES || t in TYPE_ALIASES || t in s.types) return new import_obsidian.Notice(`${t} is already a type.`);
+      if (t === "proof") return new import_obsidian.Notice("A proof is written `\\begin{proof}`, not as a callout; its word is in the table above.");
       if (OBSIDIAN_CALLOUTS.includes(t)) return new import_obsidian.Notice(`${t} is one of Obsidian's own callouts.`);
       s.types[t] = this.newStyle;
       this.newType = "";
@@ -664,6 +675,14 @@ function renameCommand(plugin) {
         const lineText = editor.getLine(line);
         const self = editor.getValue().split("\n");
         self[line] = lineText.replace(h[2], name);
+        if (self.some((l) => {
+          const d = HEADING.exec(l);
+          return d && headingKey(d[2]) === headingKey(h[2]);
+        })) {
+          setText(editor, self.join("\n"));
+          new import_obsidian2.Notice(`Theorem Callouts: another heading \xAB${h[2]}\xBB is in the note, so links to it are left as they are.`);
+          return;
+        }
         await apply(plugin.app, await plan(plugin.app, file, self.join("\n"), h[2], name), editor, file);
       }).open();
       return true;
@@ -958,7 +977,8 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   /** A reference drawn by the plugin, not as an Obsidian link: Obsidian previews and follows those itself,
    *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
   refEl(text, linktext, sourcePath, current, source) {
-    const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+    const span = createSpan({ cls: "theorem-ref theorem-ref-link" });
+    fillInline(span, text);
     span.toggleClass("theorem-ref-missing", text === "??");
     const parent = { hoverPopover: null };
     span.addEventListener("mousedown", (e) => {
@@ -993,7 +1013,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
         const { item, parsed } = this.resolveTarget(linktext, sourcePath, current());
         const shown = item && this.shown(item, parsed);
         const ref = span.appendChild(this.refEl(shown ?? "\u2026", linktext, sourcePath, current, source));
-        if (!shown) this.locate(linktext, sourcePath, current()).then((t) => ref.setText((t && this.shown(t.item, t.parsed)) ?? "??"));
+        if (!shown) this.locate(linktext, sourcePath, current()).then((t) => fillInline(ref, (t && this.shown(t.item, t.parsed)) ?? "??"));
       }
     }
     span.appendText(text.slice(pos));
@@ -1082,12 +1102,13 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
       const href = a.getAttribute("data-href") ?? "";
       const lt = parseLinktext(href);
       if (!lt) return;
-      const aliased = !(a.textContent ?? "").includes(lt.label);
+      const text = (a.textContent ?? "").trim();
+      const aliased = text !== href && !text.endsWith(`^${lt.label}`);
       const set = (item2, target) => {
         if (item2?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
         const t = item2 && this.shown(item2, target);
         if (t && !aliased) {
-          a.setText(t);
+          fillInline(a, t);
           a.addClass("theorem-ref");
         }
       };
@@ -1201,8 +1222,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
           for (let n = start; n <= stop; n++) {
             if (parsed.codeLines.has(n - 1)) continue;
             const line = view.state.doc.line(n);
-            const lab = /^\^([A-Za-z0-9_-]+)\s*$/.exec(line.text);
-            if (lab && parsed.labels.has(lab[1])) {
+            if (parsed.labelLines.has(n - 1)) {
               b.add(line.from, line.from, import_view2.Decoration.line({ class: "theorem-label-line" }));
               continue;
             }
@@ -1239,6 +1259,17 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
 };
 function signature(p) {
   return [...p.callouts, ...p.equations, ...p.headings].map((i) => `${i.line}:${i.number}`).concat(p.lang).join(",");
+}
+function fillInline(el, text) {
+  el.empty();
+  let math = false;
+  for (const part of text.split(/(\$[^$]+\$)/)) {
+    if (/^\$[^$]+\$$/.test(part)) {
+      el.appendChild((0, import_obsidian3.renderMath)(part.slice(1, -1), false));
+      math = true;
+    } else el.appendText(part.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").replace(/\*\*|__|==|~~|[*`]/g, ""));
+  }
+  if (math) (0, import_obsidian3.finishRenderMath)();
 }
 function quoteEnd(doc, line) {
   let end = line;
