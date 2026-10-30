@@ -7,6 +7,7 @@ export interface TheoremSettings {
 	plainStyle: boolean;
 	titleHeading: boolean; // with numbered sections, the heading that opens a note is its title
 	unnumbered: string;    // comma-separated headings left without a number
+	renameAsk: boolean;    // after a heading is edited, offer to update the references to it
 }
 
 export const DEFAULT_SETTINGS: TheoremSettings = {
@@ -14,6 +15,7 @@ export const DEFAULT_SETTINGS: TheoremSettings = {
 	plainStyle: true,
 	titleHeading: DEFAULT_SECTIONS.titleHeading,
 	unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
+	renameAsk: false,
 };
 
 export class TheoremSettingTab extends PluginSettingTab {
@@ -48,5 +50,10 @@ export class TheoremSettingTab extends PluginSettingTab {
 			.addText(t => t
 				.setValue(s.unnumbered)
 				.onChange(v => { s.unnumbered = v; this.plugin.saveSettings(); }));
+		new Setting(containerEl).setName("Offer to update references after a heading is edited")
+			.setDesc("Obsidian leaves links to a heading unchanged when the heading is renamed. With this on, when the cursor leaves an edited heading, the plugin asks whether to update the links to it in the vault and the names in `thcl-unnumbered` and `thcl-appendix`. The command «Rename heading» does the same at any time.")
+			.addToggle(t => t
+				.setValue(s.renameAsk)
+				.onChange(v => { s.renameAsk = v; this.plugin.saveData(s); }));
 	}
 }

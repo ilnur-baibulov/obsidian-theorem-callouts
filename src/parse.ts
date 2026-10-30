@@ -106,7 +106,7 @@ export const DEFAULT_SECTIONS: SectionOptions = {
 const HEADER = /^((?:>\s*)+)\[!([A-Za-z]+)(?:\|([^\]]*))?\]([+-]?)[ \t]*(.*)$/;
 const LABEL_LINE = /^\s*\^([A-Za-z0-9_-]+)\s*$/;
 const TRAILING_LABEL = /\$\$\s*\^([A-Za-z0-9_-]+)\s*$/;
-const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+export const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 
 function quoteDepth(line: string): number {
 	const m = /^((?:>\s*)*)/.exec(line);
@@ -145,7 +145,7 @@ interface Frontmatter {
 	end: number;
 }
 
-const unquote = (v: string) => v.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+export const unquote = (v: string) => v.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
 
 /** Value of a YAML key: a scalar, `[a, b]`, or a block list `- a` on the following lines. */
 function yamlValues(body: string[], key: string): string[] {

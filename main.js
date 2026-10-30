@@ -23,8 +23,8 @@ __export(main_exports, {
   default: () => TheoremCallouts
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
-var import_view = require("@codemirror/view");
+var import_obsidian3 = require("obsidian");
+var import_view2 = require("@codemirror/view");
 var import_state = require("@codemirror/state");
 
 // src/parse.ts
@@ -364,7 +364,8 @@ var DEFAULT_SETTINGS = {
   language: "auto",
   plainStyle: true,
   titleHeading: DEFAULT_SECTIONS.titleHeading,
-  unnumbered: DEFAULT_SECTIONS.unnumbered.join(", ")
+  unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
+  renameAsk: false
 };
 var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -392,12 +393,240 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
       s.unnumbered = v;
       this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("Offer to update references after a heading is edited").setDesc("Obsidian leaves links to a heading unchanged when the heading is renamed. With this on, when the cursor leaves an edited heading, the plugin asks whether to update the links to it in the vault and the names in `thcl-unnumbered` and `thcl-appendix`. The command \xABRename heading\xBB does the same at any time.").addToggle((t) => t.setValue(s.renameAsk).onChange((v) => {
+      s.renameAsk = v;
+      this.plugin.saveData(s);
+    }));
+  }
+};
+
+// src/rename-ui.ts
+var import_obsidian2 = require("obsidian");
+var import_view = require("@codemirror/view");
+
+// src/rename.ts
+function linkHeading(text) {
+  return text.replace(/[[\]]/g, "").replace(/[#|^]/g, " ").replace(/\s+/g, " ").trim();
+}
+var LINK = /(!?\[\[)([^[\]|#\n]*)((?:#[^[\]|#\n]+)+)(\|[^\]\n]*)?\]\]/g;
+function renameLinks(text, old, name, isTarget) {
+  const key = headingKey(old);
+  let count = 0;
+  const out = text.replace(LINK, (all, open, path, sub, alias = "") => {
+    if (!isTarget(path)) return all;
+    let hit = false;
+    const parts = sub.slice(1).split("#").map((p) => {
+      if (p.startsWith("^") || headingKey(p) !== key) return p;
+      hit = true;
+      return linkHeading(name);
+    });
+    if (!hit) return all;
+    count++;
+    return `${open}${path}#${parts.join("#")}${alias}]]`;
+  });
+  return { text: out, count };
+}
+var NAME_KEYS = ["thcl-unnumbered", "thcl-appendix"];
+function yamlString(v) {
+  return /[:#,[\]{}&*!|>'"%@`]|^[-?\s]|\s$/.test(v) ? `"${v.replace(/"/g, "'")}"` : v;
+}
+function renameInFrontmatter(text, old, name) {
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return { text, count: 0 };
+  const key = headingKey(old);
+  const hit = (v) => headingKey(unquote(v)) === key;
+  let count = 0, inKey = false;
+  for (let i = 1; i < lines.length && lines[i] !== "---"; i++) {
+    const item = /^(\s+-\s+)(.*)$/.exec(lines[i]);
+    if (item) {
+      if (inKey && hit(item[2])) {
+        lines[i] = item[1] + yamlString(name);
+        count++;
+      }
+      continue;
+    }
+    const m = /^([\w-]+):\s*(.*)$/.exec(lines[i]);
+    inKey = !!m && NAME_KEYS.includes(m[1]);
+    if (!m || !inKey || !m[2]) continue;
+    if (!m[2].startsWith("[")) {
+      if (hit(m[2])) {
+        lines[i] = `${m[1]}: ${yamlString(name)}`;
+        count++;
+      }
+      continue;
+    }
+    const items = m[2].replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
+    if (!items.some((v) => hit(v))) continue;
+    const renamed = items.map((v) => hit(v) ? (count++, name) : v);
+    const block = renamed.some((v) => v.includes(","));
+    const repl = block ? [`${m[1]}:`, ...renamed.map((v) => `  - ${yamlString(v)}`)] : [`${m[1]}: [${renamed.map(yamlString).join(", ")}]`];
+    lines.splice(i, 1, ...repl);
+    i += repl.length - 1;
+  }
+  return { text: lines.join("\n"), count };
+}
+
+// src/rename-ui.ts
+async function plan(app, file, self, old, name) {
+  const dest = (p, src) => app.metadataCache.getFirstLinkpathDest(p.trim(), src) === file;
+  const own = (text) => {
+    const links = renameLinks(text, old, name, (p) => p === "" || dest(p, file.path));
+    const fm = renameInFrontmatter(links.text, old, name);
+    return { text: fm.text, count: links.count + fm.count };
+  };
+  const changes = [{ file, ...own(self), rewrite: (t) => own(t).text }];
+  for (const [src, targets] of Object.entries(app.metadataCache.resolvedLinks)) {
+    const f = app.vault.getAbstractFileByPath(src);
+    if (src === file.path || !targets[file.path] || !(f instanceof import_obsidian2.TFile)) continue;
+    const rewrite = (text) => renameLinks(text, old, name, (p) => p !== "" && dest(p, src));
+    const r = rewrite(await app.vault.cachedRead(f));
+    if (r.count) changes.push({ file: f, ...r, rewrite: (t) => rewrite(t).text });
+  }
+  return changes;
+}
+async function apply(app, changes, editor, editorFile) {
+  for (const c of changes) {
+    if (editor && c.file === editorFile) setText(editor, c.text);
+    else if (c.count) await app.vault.process(c.file, c.rewrite);
+  }
+  new import_obsidian2.Notice(`Theorem Callouts: updated ${summary(changes)}.`);
+}
+function summary(changes) {
+  const links = changes.reduce((n, c) => n + c.count, 0);
+  const notes = changes.filter((c) => c.count).length;
+  return `${links} ${links === 1 ? "reference" : "references"} in ${notes} ${notes === 1 ? "note" : "notes"}`;
+}
+function setText(editor, after) {
+  const before = editor.getValue();
+  if (before === after) return;
+  const a = before.split("\n"), b = after.split("\n");
+  const changes = a.length === b.length ? a.flatMap((l, i) => l === b[i] ? [] : [{ from: { line: i, ch: 0 }, to: { line: i, ch: l.length }, text: b[i] }]) : [{ from: { line: 0, ch: 0 }, to: editor.offsetToPos(before.length), text: after }];
+  editor.transaction({ changes });
+}
+function renameCommand(plugin) {
+  plugin.addCommand({
+    id: "rename-heading",
+    name: "Rename heading",
+    editorCheckCallback: (checking, editor, view) => {
+      const line = editor.getCursor().line;
+      const h = HEADING.exec(editor.getLine(line));
+      if (!h || !view.file) return false;
+      if (checking) return true;
+      const file = view.file;
+      new NameModal(plugin.app, h[2], async (name) => {
+        if (headingKey(name) === headingKey(h[2])) return;
+        const lineText = editor.getLine(line);
+        const self = editor.getValue().split("\n");
+        self[line] = lineText.replace(h[2], name);
+        await apply(plugin.app, await plan(plugin.app, file, self.join("\n"), h[2], name), editor, file);
+      }).open();
+      return true;
+    }
+  });
+}
+function renameWatcher(plugin) {
+  return import_view.ViewPlugin.fromClass(class {
+    constructor() {
+      this.pending = null;
+    }
+    update(u) {
+      if (!plugin.settings.renameAsk) {
+        this.pending = null;
+        return;
+      }
+      const file = u.state.field(import_obsidian2.editorInfoField, false)?.file;
+      if (this.pending && u.docChanged) this.pending.pos = u.changes.mapPos(this.pending.pos, -1);
+      if (!this.pending && file && u.transactions.some((t) => t.isUserEvent("input") || t.isUserEvent("delete"))) {
+        u.changes.iterChangedRanges((fromA) => {
+          if (this.pending) return;
+          const line2 = u.startState.doc.lineAt(fromA);
+          const h2 = HEADING.exec(line2.text);
+          if (h2) this.pending = { path: file.path, pos: u.changes.mapPos(line2.from, -1), old: h2[2] };
+        });
+      }
+      const p = this.pending;
+      if (!p || !(u.docChanged || u.selectionSet || u.focusChanged)) return;
+      if (file?.path !== p.path) {
+        this.pending = null;
+        return;
+      }
+      const line = u.state.doc.lineAt(Math.min(p.pos, u.state.doc.length));
+      const head = u.state.selection.main.head;
+      if (u.view.hasFocus && head >= line.from && head <= line.to) return;
+      this.pending = null;
+      const h = HEADING.exec(line.text);
+      if (h && headingKey(h[2]) !== headingKey(p.old)) offer(plugin, file, u.state.doc.toString(), p.old, h[2]);
+    }
+  });
+}
+async function offer(plugin, file, self, old, name) {
+  if (self.split("\n").some((l) => {
+    const h = HEADING.exec(l);
+    return h && headingKey(h[2]) === headingKey(old);
+  })) return;
+  const changes = await plan(plugin.app, file, self, old, name);
+  if (!changes.some((c) => c.count)) return;
+  new ConfirmModal(plugin.app, `\xAB${old}\xBB \u2192 \xAB${name}\xBB. Update ${summary(changes)}?`, async () => {
+    const view = plugin.app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
+    const editor = view?.file === file ? view.editor : null;
+    const fresh = editor ? await plan(plugin.app, file, editor.getValue(), old, name) : changes;
+    await apply(plugin.app, fresh, editor, file);
+  }).open();
+}
+var NameModal = class extends import_obsidian2.Modal {
+  constructor(app, value, done) {
+    super(app);
+    this.value = value;
+    this.done = done;
+  }
+  onOpen() {
+    this.setTitle("Rename heading");
+    const submit = () => {
+      const v = this.value.trim();
+      this.close();
+      if (v) this.done(v);
+    };
+    new import_obsidian2.Setting(this.contentEl).setName("New name").addText((t) => {
+      t.setValue(this.value).onChange((v) => {
+        this.value = v;
+      });
+      t.inputEl.style.width = "100%";
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submit();
+        }
+      });
+      window.setTimeout(() => t.inputEl.select(), 0);
+    });
+    new import_obsidian2.Setting(this.contentEl).addButton((b) => b.setButtonText("Rename").setCta().onClick(submit));
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var ConfirmModal = class extends import_obsidian2.Modal {
+  constructor(app, text, yes) {
+    super(app);
+    this.text = text;
+    this.yes = yes;
+  }
+  onOpen() {
+    this.setTitle("Heading renamed");
+    this.contentEl.createEl("p", { text: this.text });
+    new import_obsidian2.Setting(this.contentEl).addButton((b) => b.setButtonText("Update").setCta().onClick(() => {
+      this.close();
+      this.yes();
+    })).addButton((b) => b.setButtonText("Leave as is").onClick(() => this.close()));
+  }
+  onClose() {
+    this.contentEl.empty();
   }
 };
 
 // src/main.ts
 var refreshEffect = import_state.StateEffect.define();
-var TheoremCallouts = class extends import_obsidian2.Plugin {
+var TheoremCallouts = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -415,10 +644,11 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     this.register(() => document.body.removeClass("theorem-callouts-plain"));
     const plugins = this.app.plugins;
     if (plugins?.enabledPlugins?.has("math-booster")) {
-      new import_obsidian2.Notice("Theorem Callouts: disable Math Booster, otherwise captions are processed twice.", 1e4);
+      new import_obsidian3.Notice("Theorem Callouts: disable Math Booster, otherwise captions are processed twice.", 1e4);
     }
     this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
-    this.registerEditorExtension([this.refPlugin(), this.domPlugin()]);
+    this.registerEditorExtension([this.refPlugin(), this.domPlugin(), renameWatcher(this)]);
+    renameCommand(this);
     this.registerEvent(this.app.workspace.on("layout-change", () => window.setTimeout(() => this.markProperties(), 300)));
     this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.markProperties(), 300)));
     this.registerEvent(this.app.metadataCache.on("changed", (file, data) => {
@@ -502,7 +732,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   linkFile(path, sourcePath) {
     if (path === "") {
       const f = this.app.vault.getAbstractFileByPath(sourcePath);
-      return f instanceof import_obsidian2.TFile ? f : null;
+      return f instanceof import_obsidian3.TFile ? f : null;
     }
     return this.app.metadataCache.getFirstLinkpathDest(path, sourcePath);
   }
@@ -536,7 +766,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   // Equations are opened at the line found by the parser rather than through Obsidian's block ids,
   // so a reference works wherever the equation is: multi-line, inside a callout, in another note.
   async openRef(e, linktext, sourcePath, current) {
-    const newLeaf = import_obsidian2.Keymap.isModEvent(e);
+    const newLeaf = import_obsidian3.Keymap.isModEvent(e);
     const target = await this.locate(linktext, sourcePath, current);
     const byLine = target?.item.kind === "equation" || target?.item.kind === "callout" && target.item.depth > 1;
     if (!target || !byLine) return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
@@ -606,7 +836,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     while (m = re.exec(text)) {
       span.appendText(text.slice(pos, m.index));
       pos = re.lastIndex;
-      if (m[3] !== void 0) span.appendChild((0, import_obsidian2.renderMath)(m[3], false));
+      if (m[3] !== void 0) span.appendChild((0, import_obsidian3.renderMath)(m[3], false));
       else if (m[2] !== void 0) span.appendText(m[2]);
       else {
         const linktext = m[1];
@@ -617,14 +847,14 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       }
     }
     span.appendText(text.slice(pos));
-    (0, import_obsidian2.finishRenderMath)();
+    (0, import_obsidian3.finishRenderMath)();
     return span;
   }
   /** Marks a name in `thcl-unnumbered` or `thcl-appendix` that matches no heading, e.g. after a heading was renamed. */
   markProperties() {
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian2.MarkdownView) || !view.file) return;
+      if (!(view instanceof import_obsidian3.MarkdownView) || !view.file) return;
       const missing = new Set(this.fileCache.get(view.file.path)?.parsed.missing ?? []);
       view.containerEl.querySelectorAll(".metadata-property[data-property-key^='thcl-']").forEach((prop) => {
         const pills = Array.from(prop.querySelectorAll(".multi-select-pill"));
@@ -644,7 +874,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   refreshAll(rerenderReading) {
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian2.MarkdownView)) return;
+      if (!(view instanceof import_obsidian3.MarkdownView)) return;
       const cm = view.editor?.cm;
       cm?.dispatch({ effects: refreshEffect.of(null) });
       if (rerenderReading && view.getMode() === "preview") view.previewMode.rerender(true);
@@ -658,7 +888,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     let offset = 0;
     if (info) {
       parsed = this.parseText(ctx.sourcePath, info.text);
-      if (file instanceof import_obsidian2.TFile) {
+      if (file instanceof import_obsidian3.TFile) {
         const whole = await this.loadNote(file).then(() => this.fileCache.get(file.path));
         const k = whole.text === info.text ? -1 : whole.text.indexOf(info.text);
         if (k >= 0) {
@@ -666,7 +896,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
           offset = whole.text.slice(0, k).split("\n").length - 1;
         }
       }
-    } else if (file instanceof import_obsidian2.TFile) parsed = this.getParsed(file);
+    } else if (file instanceof import_obsidian3.TFile) parsed = this.getParsed(file);
     const lang = this.langOf(parsed);
     if (info && parsed) {
       const inRange = (items) => items.filter((i) => i.line >= info.lineStart + offset && i.line <= info.lineEnd + offset);
@@ -751,7 +981,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   // ---------- live preview: rendered callouts and equations ----------
   domPlugin() {
     const plugin = this;
-    return import_view.ViewPlugin.fromClass(class {
+    return import_view2.ViewPlugin.fromClass(class {
       constructor(view) {
         this.view = view;
         this.scheduled = false;
@@ -772,7 +1002,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       }
       apply() {
         const view = this.view;
-        if (!view.state.field(import_obsidian2.editorLivePreviewField, false)) return;
+        if (!view.state.field(import_obsidian3.editorLivePreviewField, false)) return;
         const parsed = plugin.parseDoc(view.state.doc);
         this.observer.disconnect();
         try {
@@ -818,19 +1048,19 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   // ---------- live preview: references and proof markers in the text ----------
   refPlugin() {
     const plugin = this;
-    return import_view.ViewPlugin.fromClass(class {
+    return import_view2.ViewPlugin.fromClass(class {
       constructor(view) {
         this.decorations = this.build(view);
       }
       update(u) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet || u.transactions.some((t) => t.effects.some((e) => e.is(refreshEffect))) || u.startState.field(import_obsidian2.editorLivePreviewField, false) !== u.state.field(import_obsidian2.editorLivePreviewField, false)) {
+        if (u.docChanged || u.viewportChanged || u.selectionSet || u.transactions.some((t) => t.effects.some((e) => e.is(refreshEffect))) || u.startState.field(import_obsidian3.editorLivePreviewField, false) !== u.state.field(import_obsidian3.editorLivePreviewField, false)) {
           this.decorations = this.build(u.view);
         }
       }
       build(view) {
         const b = new import_state.RangeSetBuilder();
-        if (!view.state.field(import_obsidian2.editorLivePreviewField, false)) return b.finish();
-        const sourcePath = view.state.field(import_obsidian2.editorInfoField, false)?.file?.path ?? "";
+        if (!view.state.field(import_obsidian3.editorLivePreviewField, false)) return b.finish();
+        const sourcePath = view.state.field(import_obsidian3.editorInfoField, false)?.file?.path ?? "";
         const parsed = plugin.parseDoc(view.state.doc);
         const sel = view.state.selection.ranges;
         const touched = (from, to) => sel.some((r) => r.from <= to && r.to >= from);
@@ -845,14 +1075,14 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
             const line = view.state.doc.line(n);
             const lab = /^\^([A-Za-z0-9_-]+)\s*$/.exec(line.text);
             if (lab && parsed.labels.has(lab[1])) {
-              b.add(line.from, line.from, import_view.Decoration.line({ class: "theorem-label-line" }));
+              b.add(line.from, line.from, import_view2.Decoration.line({ class: "theorem-label-line" }));
               continue;
             }
             const heading = headings.get(n - 1);
             if (heading) {
               const at = line.from + /^#+\s*/.exec(line.text)[0].length;
               const caption = headingCaption(heading, plugin.langOf(parsed));
-              b.add(at, at, import_view.Decoration.widget({ widget: new HeadingNumberWidget(caption), side: -1 }));
+              b.add(at, at, import_view2.Decoration.widget({ widget: new HeadingNumberWidget(caption), side: -1 }));
             }
             re.lastIndex = 0;
             let m;
@@ -866,11 +1096,11 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
                   const { item } = plugin.resolveTarget(lt, sourcePath, parsed);
                   return `[[${(item && refText(item)) ?? lt}]]`;
                 });
-                b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(plugin, m[2], plugin.langOf(parsed), title, key, sourcePath) }));
+                b.add(a, z, import_view2.Decoration.replace({ widget: new ProofWidget(plugin, m[2], plugin.langOf(parsed), title, key, sourcePath) }));
                 continue;
               }
               const text = plugin.refShown(m[1], sourcePath, parsed);
-              if (text) b.add(a, z, import_view.Decoration.replace({ widget: new RefWidget(plugin, text, m[1], sourcePath) }));
+              if (text) b.add(a, z, import_view2.Decoration.replace({ widget: new RefWidget(plugin, text, m[1], sourcePath) }));
             }
           }
         }
@@ -964,7 +1194,7 @@ function proofSpan(kind, lang) {
   const span = createSpan({ cls: `theorem-proof-${kind} theorem-proof-${lang}`, text: PROOF[lang][kind] });
   return span;
 }
-var ProofWidget = class extends import_view.WidgetType {
+var ProofWidget = class extends import_view2.WidgetType {
   constructor(plugin, kind, lang, title, key, sourcePath) {
     super();
     this.plugin = plugin;
@@ -982,7 +1212,7 @@ var ProofWidget = class extends import_view.WidgetType {
     return this.plugin.proofCaption(this.title, this.lang, this.sourcePath, () => this.plugin.parseDoc(view.state.doc), "editor");
   }
 };
-var HeadingNumberWidget = class extends import_view.WidgetType {
+var HeadingNumberWidget = class extends import_view2.WidgetType {
   constructor(number) {
     super();
     this.number = number;
@@ -994,7 +1224,7 @@ var HeadingNumberWidget = class extends import_view.WidgetType {
     return createSpan({ cls: "theorem-heading-number", text: this.number });
   }
 };
-var RefWidget = class extends import_view.WidgetType {
+var RefWidget = class extends import_view2.WidgetType {
   constructor(plugin, text, linktext, sourcePath) {
     super();
     this.plugin = plugin;

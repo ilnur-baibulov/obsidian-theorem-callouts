@@ -11,6 +11,7 @@ import {
 	PROOF, theoremType, refText, headingCaption, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
+import { renameCommand, renameWatcher } from "./rename-ui";
 
 const refreshEffect = StateEffect.define<null>();
 
@@ -34,7 +35,8 @@ export default class TheoremCallouts extends Plugin {
 		}
 
 		this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
-		this.registerEditorExtension([this.refPlugin(), this.domPlugin()]);
+		this.registerEditorExtension([this.refPlugin(), this.domPlugin(), renameWatcher(this)]);
+		renameCommand(this);
 		// The properties panel is drawn after the note opens.
 		this.registerEvent(this.app.workspace.on("layout-change", () => window.setTimeout(() => this.markProperties(), 300)));
 		this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.markProperties(), 300)));
