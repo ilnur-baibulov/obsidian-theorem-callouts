@@ -11,14 +11,15 @@
 --   [[Note]], [[Note|text]]   -> plain text;   ![[image.png|300]] -> image
 --   `\begin{proof}` / `\end{proof}` -> amsthm proof
 --   `\begin{proof}[Proof of [[#^thm]]]` -> the same with its own caption
---   numbersections: true      -> numbered sections; [[#Heading]] -> \ref, [[Note#Heading]] -> its number,
---                                «??» for a heading the note lacks; also thcl-numbersections
---   thcl-unnumbered: [Heading] -> \section*;  thcl-appendix: Heading -> appendices «Приложение A» from it on
+--   numbersections: true / false -> numbered sections or not, otherwise the plugin's setting
+--   # Heading + ^name below   -> \label{name}; [[#^name]] -> \ref, [[Note#^name]] -> its number
+--   # Heading + ^- or ^-name  -> \section*; [[#^name]] -> the heading's text
+--   [[#Heading]]              -> the heading's text
 --   thcl-title-heading: true  -> the heading that opens the note becomes the title
 --   The language (ru/en) comes from `lang:` or the prose.
 --   Notes of other files are looked up in the vault: the nearest folder above the input file
---   that contains `.obsidian`, or $OBSIDIAN_VAULT. The plugin's settings (first heading as the title,
---   unnumbered headings) are read from the vault's .obsidian/plugins/theorem-callouts/data.json.
+--   that contains `.obsidian`, or $OBSIDIAN_VAULT. The plugin's settings (numbered sections,
+--   first heading as the title, unnumbered headings) are read from the vault's .obsidian/plugins/theorem-callouts/data.json.
 
 local THEOREM_TYPES = {
   theorem = "plain", lemma = "plain", proposition = "plain", corollary = "plain",
@@ -63,7 +64,7 @@ local VAULT = find_vault()
 
 -- The plugin's settings, so that the PDF numbers sections as the plugin does.
 local function load_settings()
-  local s = { titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
+  local s = { numberSections = false, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
   local f = io.open(VAULT .. "/.obsidian/plugins/theorem-callouts/data.json", "r")
   if f then
     local ok, d = pcall(pandoc.json.decode, f:read("a"), false)
@@ -75,7 +76,7 @@ local function load_settings()
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
     if name ~= "" then list[#list + 1] = name end
   end
-  return { titleHeading = s.titleHeading == true, unnumbered = list }
+  return { numberSections = s.numberSections == true, titleHeading = s.titleHeading == true, unnumbered = list }
 end
 local SETTINGS = load_settings()
 
@@ -179,19 +180,12 @@ local function heading_key(inlines)
   return s
 end
 
--- Strings of a metadata value: a scalar or a list.
-local function meta_strings(v)
-  if v == nil then return {} end
-  if pandoc.utils.type(v) == "List" then
-    local out = {}
-    for _, x in ipairs(v) do out[#out + 1] = pandoc.utils.stringify(x) end
-    return out
-  end
-  return { pandoc.utils.stringify(v) }
-end
-
+-- `numbersections` in the note, otherwise the plugin's setting.
 local function numbered(doc)
-  return doc.meta.numbersections == true or doc.meta["thcl-numbersections"] == true
+  for _, k in ipairs({ "numbersections", "thcl-numbersections" }) do
+    if type(doc.meta[k]) == "boolean" then return doc.meta[k] end
+  end
+  return SETTINGS.numberSections
 end
 
 -- `thcl-title-heading` in the note, otherwise the plugin's setting.
@@ -201,47 +195,38 @@ local function title_heading(doc)
   return SETTINGS.titleHeading
 end
 
--- Section numbers as the plugin shows them: with `numbersections: true`, three levels deep, the top level
--- present being the section; with `thcl-title-heading` the heading that opens the note is its title.
--- Headings in the setting or in `thcl-unnumbered` stay without a number, with everything under them;
--- from the `thcl-appendix` heading on, sections are lettered A, B and their subsections A.1.
--- Returns heading key -> number, the set of unnumbered keys, and the key of the first appendix heading.
-local function number_headings(doc)
-  if not numbered(doc) then return {}, {}, nil end
-  local list = {}
-  for _, b in ipairs(doc.blocks) do if b.t == "Header" then list[#list + 1] = b end end
-  if list[1] and doc.blocks[1] == list[1] and title_heading(doc) then table.remove(list, 1) end
+-- Section numbers as the plugin shows them: three levels deep, the top level present being the section.
+-- A heading with `^-` below, or listed in the setting and without a label, stays without a number,
+-- with everything under it. Returns, by block index, the number and the label of each heading
+-- (`^-name` gives the label `name`), and the unnumbered ones.
+local function number_headings(blocks, on)
+  local nums, labels, off = {}, {}, {}
   local listed = {}
   for _, h in ipairs(SETTINGS.unnumbered) do listed[heading_key(pandoc.Inlines(h))] = true end
-  for _, h in ipairs(meta_strings(doc.meta["thcl-unnumbered"])) do listed[heading_key(pandoc.Inlines(h))] = true end
-  local app = doc.meta["thcl-appendix"]
-  local appendix = app and heading_key(pandoc.Inlines(pandoc.utils.stringify(app)))
   local top = math.huge
-  for _, h in ipairs(list) do top = math.min(top, h.level) end
-  local out, skipped, counters = {}, {}, { 0, 0, 0 }
-  local in_appendix, first_appendix, skip_below = false, nil, nil
-  for _, h in ipairs(list) do
-    local key = heading_key(h.content)
-    if skip_below and h.level > skip_below then skipped[key] = true
-    else
-      skip_below = nil
-      local depth = h.level - top + 1
-      if listed[key] then skipped[key] = true; skip_below = h.level
+  for _, b in ipairs(blocks) do if b.t == "Header" then top = math.min(top, b.level) end end
+  local counters, skip_below = { 0, 0, 0 }, nil
+  for i, h in ipairs(blocks) do
+    if h.t == "Header" then
+      local lab = label_of(blocks[i + 1])
+      local dash = lab and lab:sub(1, 1) == "-"
+      if dash then lab = lab:sub(2) end
+      if lab and lab ~= "" then labels[i] = lab end
+      if not on then
+      elseif skip_below and h.level > skip_below then off[i] = true
+      elseif dash or (not lab and listed[heading_key(h.content)]) then off[i] = true; skip_below = h.level
       else
-        if depth == 1 and key == appendix and not in_appendix then
-          in_appendix, first_appendix, counters = true, key, { 0, 0, 0 }
-        end
+        skip_below = nil
+        local depth = h.level - top + 1
         if depth <= 3 then
           counters[depth] = counters[depth] + 1
           for k = depth + 1, 3 do counters[k] = 0 end
-          local parts = { table.unpack(counters, 1, depth) }
-          if in_appendix then parts[1] = string.char(64 + counters[1]) end
-          out[key] = table.concat(parts, ".")
+          nums[i] = table.concat({ table.unpack(counters, 1, depth) }, ".")
         end
       end
     end
   end
-  return out, skipped, first_appendix
+  return nums, labels, off
 end
 
 -- macOS returns file names in NFD (й = и + U+0306, ё = е + U+0308); links in the text are NFC.
@@ -280,8 +265,9 @@ local function external_number(note, label)
         local text = f:read("a"); f:close()
         local doc = pandoc.read(text, READER)
         numbers = number_labels(doc.blocks)
-        for key, n in pairs((number_headings(doc))) do numbers["#" .. key] = n end
-        numbers["#"] = numbered(doc) or nil
+        if doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then doc.blocks:remove(1) end
+        local nums, labels = number_headings(doc.blocks, numbered(doc))
+        for i, lab in pairs(labels) do numbers[lab] = nums[i] or pandoc.utils.stringify(doc.blocks[i].content) end
       end
     end
     note_cache[note] = numbers
@@ -291,24 +277,18 @@ end
 
 -- ---------- inline: wiki links, embeds, proofs ----------
 
-local local_labels, local_sections, local_numbered = {}, {}, false
+local local_labels, local_texts = {}, {}
 
 local function wikilink(content)
   local target, alias = content:match("^([^|]*)|(.*)$")
   target = target or content
   local note, label = target:match("^(.-)#%^([%w_-]+)$")
   local hnote, heading = target:match("^([^#]*)#.-([^#]+)$")
-  if heading and not label and not alias then
-    local key = heading_key(pandoc.Inlines(heading))
-    -- A heading that a note with numbered sections lacks prints «??», as the plugin shows it.
-    if hnote == "" then
-      local id = local_sections[key]
-      return id and pandoc.RawInline("latex", "\\ref{" .. id .. "}") or pandoc.Str(local_numbered and "??" or heading)
-    end
-    return pandoc.Str(external_number(hnote, "#" .. key) or (external_number(hnote, "#") and "??") or heading)
-  end
+  -- A link to a heading by its name shows the name, as in Obsidian.
+  if heading and not label and not alias then return pandoc.Str(heading) end
   if label and not alias then
     if note == "" then
+      if local_texts[label] then return pandoc.Str(local_texts[label]) end
       local shown = local_labels[label]
       -- Equations are referred to with parentheses, as the plugin shows them: \eqref.
       if shown then return pandoc.RawInline("latex", (shown:match("^%(") and "\\eqref{" or "\\ref{") .. label .. "}") end
@@ -504,9 +484,8 @@ function Pandoc(doc)
   lang = detect_lang(doc)
   doc.meta.lang = pandoc.MetaString(lang)
 
-  local sections, skipped, appendix = number_headings(doc)
-  local_numbered = numbered(doc)
-  if local_numbered then doc.meta.numbersections = true end
+  local on = numbered(doc)
+  doc.meta.numbersections = on
 
   -- With `thcl-title-heading` (or the setting) the heading that opens the note becomes the title.
   if not doc.meta.title and doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then
@@ -515,33 +494,25 @@ function Pandoc(doc)
   end
 
   -- Sections: the top level present becomes \section, three levels are numbered, as in the plugin.
+  -- A label below a heading becomes its identifier, and the label line is dropped.
+  local nums, labels, off = number_headings(doc.blocks, on)
   local top = math.huge
   for _, b in ipairs(doc.blocks) do if b.t == "Header" then top = math.min(top, b.level) end end
-  for _, b in ipairs(doc.blocks) do if b.t == "Header" then b.level = b.level - top + 1 end end
-  if next(sections) or next(skipped) then
-    local blocks = pandoc.List()
-    for _, b in ipairs(doc.blocks) do
-      if b.t == "Header" then
-        local key = heading_key(b.content)
-        -- Pandoc's own identifiers are escaped in LaTeX labels when they are not ASCII.
-        if sections[key] then
-          b.identifier = "sec-" .. sections[key]
-          local_sections[key] = local_sections[key] or b.identifier
-        end
-        if skipped[key] then
-          b.classes:insert("unnumbered")
-          -- An unnumbered section after the appendix, such as the references, is not part of it.
-          if appendix == "open" and b.level == 1 then blocks:insert(pandoc.RawBlock("latex", "\\end{appendices}")); appendix = "closed" end
-        end
-        -- The appendix package prints «Приложение A» before the title and in the contents.
-        if key == appendix and b.level == 1 then blocks:insert(pandoc.RawBlock("latex", "\\begin{appendices}")); appendix = "open" end
+  local blocks = pandoc.List()
+  for i, b in ipairs(doc.blocks) do
+    if b.t == "Header" then
+      b.level = b.level - top + 1
+      if off[i] then b.classes:insert("unnumbered") end
+      local lab = labels[i]
+      if lab then
+        b.identifier = lab
+        if nums[i] then local_labels[lab] = nums[i] else local_texts[lab] = pandoc.utils.stringify(b.content) end
       end
-      blocks:insert(b)
     end
-    if appendix == "open" then blocks:insert(pandoc.RawBlock("latex", "\\end{appendices}")) end
-    doc.blocks = blocks
-    if not doc.meta.secnumdepth then doc.meta.secnumdepth = pandoc.MetaString("3") end
+    if not (doc.blocks[i - 1] and doc.blocks[i - 1].t == "Header" and label_of(b)) then blocks:insert(b) end
   end
+  doc.blocks = blocks
+  if on and not doc.meta.secnumdepth then doc.meta.secnumdepth = pandoc.MetaString("3") end
 
   -- Labels of numbered statements and equations in this note; links to anything else print "??".
   for lab, shown in pairs(number_labels(doc.blocks)) do local_labels[lab] = shown end

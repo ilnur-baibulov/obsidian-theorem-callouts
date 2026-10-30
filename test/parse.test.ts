@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseNote, DEFAULT_SECTIONS, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod, headingCaption } from "../src/parse.ts";
+import { parseNote, DEFAULT_SECTIONS, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod } from "../src/parse.ts";
 
 const note = `---
 created: 2026-10-19
@@ -113,14 +113,39 @@ numbersections: true
 	const own = parseNote(src.replace("---\n#", "thcl-title-heading: false\n---\n#"), { ...DEFAULT_SECTIONS, titleHeading: true });
 	assert.deepEqual(own.headings.slice(0, 3).map(h => h.number), ["1", "1.1", "1.2"]);
 	assert.equal(parseNote(src).headings[0].number, "1");
+	// A link to a heading by name stays an ordinary link.
 	const lt = parseLinktext("#Оценки#малый след")!;
 	assert.deepEqual(lt, { path: "", label: "малый след", heading: true });
-	assert.equal(refText(findTarget(p, lt)!), "2.1");
+	assert.equal(findTarget(p, lt), null);
 	assert.equal(parseNote(src.replace("numbersections: true", "lang: ru")).headings[1].number, null);
 	assert.equal(parseNote("# A\n# B\n## C").headings.map(h => h.number).join(), ",,");
-	const q = parseNote("---\nnumbersections: true\n---\n## Уровни $K_1$\n## Пример из [PBK, §6.5.2]");
-	assert.equal(refText(findTarget(q, parseLinktext("#Уровни $K_1$")!)!), "1");
-	assert.equal(refText(findTarget(q, parseLinktext("#Пример из PBK §6.5.2")!)!), "2");
+	// The setting numbers every note; the frontmatter wins.
+	assert.equal(parseNote("# A\n# B", { ...DEFAULT_SECTIONS, numberSections: true }).headings[1].number, "2");
+	assert.equal(parseNote("---\nnumbersections: false\n---\n# A", { ...DEFAULT_SECTIONS, numberSections: true }).headings[0].number, null);
+});
+
+test("labels below headings", () => {
+	const p = parseNote(`---
+numbersections: true
+---
+## Введение
+^sec-intro
+### Обозначения
+
+^-
+## Оценки $K_1$
+^-sec-est
+### Внутри
+## Итог
+## Литература
+## References
+^refs
+`);
+	assert.deepEqual(p.headings.map(h => h.number), ["1", null, null, null, "2", null, "3"]);
+	assert.equal(refText(p.labels.get("sec-intro")!), "1");
+	assert.equal(refText(p.labels.get("sec-est")!), "Оценки $K_1$");
+	assert.equal(refText(p.labels.get("refs")!), "3");
+	assert.equal(refText(parseNote("## Введение\n^sec-a").labels.get("sec-a")!), "Введение");
 });
 
 test("proof captions", () => {
@@ -134,30 +159,6 @@ test("short type names", () => {
 	const p = parseNote("> [!thm] главная\n> Текст.\n^thm-a\n\n> [!lem]\n> Текст.\n\n> [!note]\n> Не теорема.");
 	assert.deepEqual(p.callouts.map(c => `${c.type}:${c.number}`), ["theorem:1", "lemma:2"]);
 	assert.equal(refText(p.labels.get("thm-a")!), "1");
-});
-
-test("unnumbered sections and the appendix", () => {
-	const p = parseNote(`---
-numbersections: true
-thcl-unnumbered: [Благодарности, "Нет такого"]
-thcl-appendix: Доказательства лемм
----
-## Благодарности
-### Подраздел благодарностей
-## Введение
-### Обозначения
-## Доказательства лемм
-### Лемма о следе
-## Таблицы
-## Литература
-`);
-	assert.deepEqual(p.headings.map(h => h.number), [null, null, "1", "1.1", "A", "A.1", "B", null]);
-	assert.equal(headingCaption(p.headings[4], "ru"), "Приложение A.");
-	assert.equal(headingCaption(p.headings[5], "ru"), "A.1");
-	assert.equal(refText(p.headings[4]), "A");
-	assert.deepEqual(p.missing, ["Нет такого"]);
-	const q = parseNote("---\nthcl-numbersections: true\nthcl-unnumbered:\n  - Итог\n---\n## Начало\n## Итог\n");
-	assert.deepEqual(q.headings.map(h => h.number), ["1", null]);
 });
 
 test("a label inside a quote attaches to the callout nested there", () => {

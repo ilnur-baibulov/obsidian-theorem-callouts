@@ -36,13 +36,6 @@ export const NAMES: Record<Lang, Record<TheoremType, string>> = {
 	},
 };
 
-export const APPENDIX: Record<Lang, string> = { ru: "Приложение", en: "Appendix" };
-
-/** Number shown before a heading: «2.1», and «Приложение A.» for a section of the appendix. */
-export function headingCaption(h: HeadingItem, lang: Lang): string | null {
-	if (h.number === null) return null;
-	return h.appendix && !h.number.includes(".") ? `${APPENDIX[lang]} ${h.number}.` : h.number;
-}
 
 export const PROOF: Record<Lang, { begin: string; end: string }> = {
 	ru: { begin: "Доказательство.", end: "□" },
@@ -74,8 +67,9 @@ export interface HeadingItem {
 	line: number;
 	level: number;         // number of '#'
 	text: string;
-	number: string | null; // "2.1" when the note has `numbersections: true`; "A", "A.1" in the appendix
-	appendix: boolean;
+	number: string | null; // "2.1" when sections are numbered
+	label: string | null;  // `^name` on the line below; `^-name` gives the label `name`
+	off: boolean;          // `^-` or `^-name` below: no number
 }
 
 export type Item = CalloutItem | EquationItem | HeadingItem;
@@ -88,17 +82,18 @@ export interface ParsedNote {
 	labels: Map<string, Item>;
 	headings: HeadingItem[];
 	numberSections: boolean;
-	missing: string[];      // names in `thcl-unnumbered` and `thcl-appendix` that match no heading
 	codeLines: Set<number>; // lines inside fenced code blocks
 }
 
 /** How sections are numbered when a note does not say: from the plugin's settings. */
 export interface SectionOptions {
+	numberSections: boolean; // in notes without `numbersections` in the frontmatter
 	titleHeading: boolean; // the heading that opens a note is its title
 	unnumbered: string[];  // headings left without a number in every note
 }
 
 export const DEFAULT_SECTIONS: SectionOptions = {
+	numberSections: false,
 	titleHeading: false,
 	unnumbered: ["References", "Bibliography", "Литература", "Список литературы"],
 };
@@ -138,10 +133,8 @@ export function detectLang(text: string, frontmatterLang?: string): Lang {
 // Keys of the plugin's own carry the prefix `thcl-`; `lang` and `numbersections` are pandoc's and mean the same there.
 interface Frontmatter {
 	lang?: string;
-	numberSections: boolean;
+	numberSections?: boolean;
 	titleHeading?: boolean;
-	unnumbered: string[]; // headings left without a number
-	appendix?: string;    // heading from which top-level sections are lettered
 	end: number;
 }
 
@@ -164,7 +157,7 @@ function yamlValues(body: string[], key: string): string[] {
 }
 
 function frontmatter(lines: string[]): Frontmatter {
-	if (lines[0] !== "---") return { numberSections: false, unnumbered: [], end: 0 };
+	if (lines[0] !== "---") return { end: 0 };
 	for (let i = 1; i < lines.length; i++) {
 		if (lines[i] === "---") {
 			const body = lines.slice(1, i);
@@ -174,15 +167,13 @@ function frontmatter(lines: string[]): Frontmatter {
 			};
 			return {
 				lang: yamlValues(body, "lang")[0],
-				numberSections: !!(flag("numbersections") ?? flag("thcl-numbersections")),
+				numberSections: flag("numbersections") ?? flag("thcl-numbersections"),
 				titleHeading: flag("thcl-title-heading"),
-				unnumbered: yamlValues(body, "thcl-unnumbered"),
-				appendix: yamlValues(body, "thcl-appendix")[0],
 				end: i + 1,
 			};
 		}
 	}
-	return { numberSections: false, unnumbered: [], end: 0 };
+	return { end: 0 };
 }
 
 /** Heading text as links compare it: case and runs of spaces do not matter. */
@@ -244,7 +235,12 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 			// A label on its own line attaches to the previous block,
 			// possibly separated by one blank line.
 			const gapOk = lastBlock && lines.slice(lastBlockEnd + 1, i).every(l => l.trim() === "") && i - lastBlockEnd <= 2;
-			if (lastBlock && gapOk && !lastBlock.label) {
+			if (lastBlock?.kind === "heading" && gapOk && !lastBlock.label && !lastBlock.off) {
+				// `^-` and `^-name` leave the section without a number.
+				const off = lab[1].startsWith("-"), name = off ? lab[1].slice(1) : lab[1];
+				lastBlock.off = off;
+				if (name) { lastBlock.label = name; labels.set(name, lastBlock); }
+			} else if (lastBlock && gapOk && !lastBlock.label) {
 				lastBlock.label = lab[1];
 				labels.set(lab[1], lastBlock);
 			}
@@ -278,8 +274,9 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 
 		const hd = quoteDepth(line) === 0 ? HEADING.exec(line) : null;
 		if (hd) {
-			headings.push({ kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null, appendix: false });
-			lastBlock = null;
+			const item: HeadingItem = { kind: "heading", line: i, level: hd[1].length, text: hd[2], number: null, label: null, off: false };
+			headings.push(item);
+			lastBlock = item; lastBlockEnd = i;
 			continue;
 		}
 
@@ -313,56 +310,47 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 		e.number = String(++eqCounter);
 	}
 
-	if (fm.numberSections) numberHeadings(headings, lines, fm, opts);
-	const keys = new Set(headings.map(h => headingKey(h.text)));
-	const missing = [...fm.unnumbered, ...(fm.appendix === undefined ? [] : [fm.appendix])].filter(n => !keys.has(headingKey(n)));
+	const numberSections = fm.numberSections ?? opts.numberSections;
+	if (numberSections) numberHeadings(headings, lines, fm, opts);
 
-	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections: fm.numberSections, missing, codeLines };
+	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines };
 }
 
 /** Numbers sections as LaTeX does, three levels deep, from the top heading level used. With `thcl-title-heading`
  *  (or the setting) the heading that opens the note is its title and has no number; the PDF export takes it so.
- *  Headings listed in the setting or in `thcl-unnumbered` stay without a number, with everything under them;
- *  from the `thcl-appendix` heading on, sections are lettered A, B and their subsections A.1. */
+ *  A heading with `^-` below, or listed in the setting and without a label, stays without a number,
+ *  with everything under it. */
 function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatter, opts: SectionOptions) {
 	let list = headings;
 	const first = lines.slice(fm.end).findIndex(l => l.trim() !== "") + fm.end;
 	if ((fm.titleHeading ?? opts.titleHeading) && list[0]?.line === first) list = list.slice(1);
 	if (!list.length) return;
 	const top = Math.min(...list.map(h => h.level));
-	const unnumbered = new Set([...opts.unnumbered, ...fm.unnumbered].map(headingKey));
-	const appendix = fm.appendix === undefined ? null : headingKey(fm.appendix);
+	const unnumbered = new Set(opts.unnumbered.map(headingKey));
 	const counters = [0, 0, 0];
-	let inAppendix = false;
 	let skipBelow = 0; // level of an unnumbered heading whose subsections are skipped too, or 0
 	for (const h of list) {
 		if (skipBelow && h.level > skipBelow) continue;
 		skipBelow = 0;
-		const key = headingKey(h.text);
-		if (unnumbered.has(key)) { skipBelow = h.level; continue; }
+		if (h.off || (!h.label && unnumbered.has(headingKey(h.text)))) { skipBelow = h.level; continue; }
 		const depth = h.level - top;
-		if (depth === 0 && key === appendix && !inAppendix) { inAppendix = true; counters.fill(0); }
 		if (depth > 2) continue;
 		counters[depth]++;
 		counters.fill(0, depth + 1);
-		const parts = counters.slice(0, depth + 1).map(String);
-		if (inAppendix) parts[0] = String.fromCharCode(64 + counters[0]);
-		h.number = parts.join(".");
-		h.appendix = inAppendix;
+		h.number = counters.slice(0, depth + 1).join(".");
 	}
 }
 
-/** Text shown for a reference to `item`, or null if it has no number. */
+/** Text shown for a reference to `item`, or null if it has no number; a section without a number shows its heading. */
 export function refText(item: Item): string | null {
 	if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
+	if (item.kind === "heading") return item.number ?? item.text;
 	return item.number;
 }
 
-/** Item a link points to: `#^label` or a heading, `#Heading` or `#Heading#Subheading`. */
+/** Item a link `#^label` points to. A link to a heading by its name stays an ordinary link. */
 export function findTarget(p: ParsedNote, lt: { label: string; heading: boolean }): Item | null {
-	if (!lt.heading) return p.labels.get(lt.label) ?? null;
-	const key = headingKey(lt.label);
-	return p.headings.find(h => headingKey(h.text) === key) ?? null;
+	return lt.heading ? null : p.labels.get(lt.label) ?? null;
 }
 
 /** Caption of a theorem callout, e.g. «Лемма 5 (малый след).» — title is passed separately as HTML. */

@@ -8,7 +8,7 @@ import {
 import { RangeSetBuilder, StateEffect, Text } from "@codemirror/state";
 import {
 	parseNote, ParsedNote, SectionOptions, CalloutItem, EquationItem, HeadingItem, Item, Lang,
-	PROOF, theoremType, refText, headingCaption, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
+	PROOF, theoremType, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
 import { renameCommand, renameWatcher } from "./rename-ui";
@@ -37,14 +37,10 @@ export default class TheoremCallouts extends Plugin {
 		this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
 		this.registerEditorExtension([this.refPlugin(), this.domPlugin(), renameWatcher(this)]);
 		renameCommand(this);
-		// The properties panel is drawn after the note opens.
-		this.registerEvent(this.app.workspace.on("layout-change", () => window.setTimeout(() => this.markProperties(), 300)));
-		this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.markProperties(), 300)));
 
 		this.registerEvent(this.app.metadataCache.on("changed", (file, data) => {
 			const parsed = this.parse(data);
 			this.fileCache.set(file.path, { mtime: file.stat.mtime, text: data, parsed });
-			this.markProperties();
 			const sig = signature(parsed);
 			if (this.signatures.get(file.path) !== sig) {
 				const first = !this.signatures.has(file.path);
@@ -66,6 +62,7 @@ export default class TheoremCallouts extends Plugin {
 
 	sections(): SectionOptions {
 		return {
+			numberSections: this.settings.numberSections,
 			titleHeading: this.settings.titleHeading,
 			unnumbered: this.settings.unnumbered.split(",").map(n => n.trim()).filter(Boolean),
 		};
@@ -147,12 +144,10 @@ export default class TheoremCallouts extends Plugin {
 		return { item: parsed && findTarget(parsed, lt), pending: !parsed, parsed };
 	}
 
-	/** Text a reference shows: the number, «??» for a heading that a note with numbered sections lacks
-	 *  (as LaTeX shows an undefined \ref, so a renamed heading is noticed), or null to keep the link as it is. */
+	/** Text a reference shows: the number, or null to keep the link as it is. */
 	refShown(linktext: string, sourcePath: string, current: ParsedNote | null): string | null {
-		const { item, parsed } = this.resolveTarget(linktext, sourcePath, current);
-		if (item) return refText(item);
-		return parsed?.numberSections && parseLinktext(linktext)?.heading ? "??" : null;
+		const { item } = this.resolveTarget(linktext, sourcePath, current);
+		return item && refText(item);
 	}
 
 	/** File and item a reference points to, loading the target note if needed. */
@@ -255,28 +250,6 @@ export default class TheoremCallouts extends Plugin {
 		return span;
 	}
 
-	/** Marks a name in `thcl-unnumbered` or `thcl-appendix` that matches no heading, e.g. after a heading was renamed. */
-	markProperties() {
-		this.app.workspace.iterateAllLeaves(leaf => {
-			const view = leaf.view;
-			if (!(view instanceof MarkdownView) || !view.file) return;
-			const missing = new Set(this.fileCache.get(view.file.path)?.parsed.missing ?? []);
-			view.containerEl.querySelectorAll<HTMLElement>(".metadata-property[data-property-key^='thcl-']").forEach(prop => {
-				const pills = Array.from(prop.querySelectorAll<HTMLElement>(".multi-select-pill"));
-				const values = pills.length ? pills : Array.from(prop.querySelectorAll<HTMLElement>(".metadata-property-value"));
-				let any = false;
-				for (const v of values) {
-					const bad = missing.has((v.textContent ?? "").trim());
-					v.toggleClass("theorem-property-missing", bad);
-					if (bad) v.setAttribute("aria-label", "No heading with this name");
-					else v.removeAttribute("aria-label");
-					any ||= bad;
-				}
-				prop.toggleClass("theorem-property-has-missing", any);
-			});
-		});
-	}
-
 	refreshAll(rerenderReading: boolean) {
 		this.app.workspace.iterateAllLeaves(leaf => {
 			const view = leaf.view;
@@ -364,15 +337,15 @@ export default class TheoremCallouts extends Plugin {
 			const lt = parseLinktext(href);
 			if (!lt) return;
 			const aliased = !(a.textContent ?? "").includes(lt.label); // the link has its own alias
-			const set = (item: Item | null, target: ParsedNote | null) => {
+			const set = (item: Item | null) => {
 				if (item?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
-				const t = item ? refText(item) : target?.numberSections && lt.heading ? "??" : null;
-				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); a.toggleClass("theorem-ref-missing", t === "??"); }
+				const t = item && refText(item);
+				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); }
 			};
-			const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
-			if (item || !pending) return set(item, parsed);
+			const { item, pending } = this.resolveTarget(href, sourcePath, current);
+			if (item || !pending) return set(item);
 			const file = this.linkFile(lt.path, sourcePath);
-			if (file) this.loadNote(file).then(p => set(findTarget(p, lt), p));
+			if (file) this.loadNote(file).then(p => set(findTarget(p, lt)));
 		});
 	}
 
@@ -483,7 +456,7 @@ export default class TheoremCallouts extends Plugin {
 						const heading = headings.get(n - 1);
 						if (heading) {
 							const at = line.from + /^#+\s*/.exec(line.text)![0].length;
-							const caption = headingCaption(heading, plugin.langOf(parsed))!;
+							const caption = heading.number!;
 							b.add(at, at, Decoration.widget({ widget: new HeadingNumberWidget(caption), side: -1 }));
 						}
 						re.lastIndex = 0;
@@ -566,7 +539,7 @@ function pairHeadings(root: HTMLElement, items: HeadingItem[], lang: Lang) {
 	const els = Array.from(root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"));
 	if (root.matches("h1, h2, h3, h4, h5, h6")) els.unshift(root);
 	els.filter(h => !h.closest("blockquote, .callout")).forEach((h, k) => {
-		const number = items[k] && headingCaption(items[k], lang);
+		const number = items[k]?.number;
 		let span = h.querySelector<HTMLElement>(":scope > .theorem-heading-number");
 		if (!number) return span?.remove();
 		span ??= createSpan({ cls: "theorem-heading-number" });

@@ -5,6 +5,7 @@ import { DEFAULT_SECTIONS } from "./parse";
 export interface TheoremSettings {
 	language: "auto" | "ru" | "en";  // used when the note has no `lang:` in its frontmatter
 	plainStyle: boolean;
+	numberSections: boolean; // in notes without `numbersections` in the frontmatter
 	titleHeading: boolean; // with numbered sections, the heading that opens a note is its title
 	unnumbered: string;    // comma-separated headings left without a number
 	renameAsk: boolean;    // after a heading is edited, offer to update the references to it
@@ -13,6 +14,7 @@ export interface TheoremSettings {
 export const DEFAULT_SETTINGS: TheoremSettings = {
 	language: "auto",
 	plainStyle: true,
+	numberSections: DEFAULT_SECTIONS.numberSections,
 	titleHeading: DEFAULT_SECTIONS.titleHeading,
 	unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
 	renameAsk: false,
@@ -38,20 +40,24 @@ export class TheoremSettingTab extends PluginSettingTab {
 			.addToggle(t => t
 				.setValue(s.plainStyle)
 				.onChange(v => { s.plainStyle = v; this.plugin.saveSettings(); }));
-		new Setting(containerEl).setName("Sections").setHeading()
-			.setDesc("Sections are numbered in notes with `numbersections: true` in the frontmatter.");
+		new Setting(containerEl).setName("Sections").setHeading();
+		new Setting(containerEl).setName("Number sections")
+			.setDesc("Number the headings of every note: «1», «2.1». `numbersections: true` / `false` in a note's frontmatter wins. `^-` on the line below a heading leaves it without a number; a label `^name` there lets `[[#^name]]` show the number.")
+			.addToggle(t => t
+				.setValue(s.numberSections)
+				.onChange(v => { s.numberSections = v; this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName("First heading is the title")
 			.setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.")
 			.addToggle(t => t
 				.setValue(s.titleHeading)
 				.onChange(v => { s.titleHeading = v; this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName("Unnumbered headings")
-			.setDesc("Headings that never get a number, separated by commas. `thcl-unnumbered` in a note's frontmatter adds to them.")
+			.setDesc("Headings that get no number, separated by commas, unless a label `^name` stands below them.")
 			.addText(t => t
 				.setValue(s.unnumbered)
 				.onChange(v => { s.unnumbered = v; this.plugin.saveSettings(); }));
 		new Setting(containerEl).setName("Offer to update references after a heading is edited")
-			.setDesc("Obsidian leaves links to a heading unchanged when the heading is renamed. With this on, when the cursor leaves an edited heading, the plugin asks whether to update the links to it in the vault and the names in `thcl-unnumbered` and `thcl-appendix`. The command «Rename heading» does the same at any time.")
+			.setDesc("Obsidian leaves links to a heading unchanged when the heading is renamed. With this on, when the cursor leaves an edited heading, the plugin asks whether to update the links to it in the vault. Links to a label `[[#^name]]` need no update. The command «Rename heading» does the same at any time.")
 			.addToggle(t => t
 				.setValue(s.renameAsk)
 				.onChange(v => { s.renameAsk = v; this.plugin.saveData(s); }));

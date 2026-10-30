@@ -2,19 +2,15 @@ import { App, Editor, MarkdownView, Modal, Notice, Setting, TFile, editorInfoFie
 import { ViewPlugin, ViewUpdate } from "@codemirror/view";
 import type TheoremCallouts from "./main";
 import { HEADING, headingKey } from "./parse";
-import { renameLinks, renameInFrontmatter } from "./rename";
+import { renameLinks } from "./rename";
 
 interface Change { file: TFile; count: number; text: string; rewrite: (text: string) => string }
 
 /** Changes to the note `file` and to the notes that link to it, with the heading `old` renamed to `name`
- *  in links and, in the note itself, in `thcl-unnumbered` and `thcl-appendix`. `self` is the note's current text. */
+ *  in links. `self` is the note's current text. */
 async function plan(app: App, file: TFile, self: string, old: string, name: string): Promise<Change[]> {
 	const dest = (p: string, src: string) => app.metadataCache.getFirstLinkpathDest(p.trim(), src) === file;
-	const own = (text: string) => {
-		const links = renameLinks(text, old, name, p => p === "" || dest(p, file.path));
-		const fm = renameInFrontmatter(links.text, old, name);
-		return { text: fm.text, count: links.count + fm.count };
-	};
+	const own = (text: string) => renameLinks(text, old, name, p => p === "" || dest(p, file.path));
 	const changes: Change[] = [{ file, ...own(self), rewrite: t => own(t).text }];
 	for (const [src, targets] of Object.entries(app.metadataCache.resolvedLinks)) {
 		const f = app.vault.getAbstractFileByPath(src);

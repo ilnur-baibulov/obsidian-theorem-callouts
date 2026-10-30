@@ -1,4 +1,4 @@
-import { headingKey, unquote } from "./parse.ts";
+import { headingKey } from "./parse.ts";
 
 /** A heading as a link writes it: without square brackets, and without `#`, `|`, `^`, which end a part of a link. */
 export function linkHeading(text: string): string {
@@ -25,43 +25,4 @@ export function renameLinks(text: string, old: string, name: string, isTarget: (
 		return `${open}${path}#${parts.join("#")}${alias}]]`;
 	});
 	return { text: out, count };
-}
-
-const NAME_KEYS = ["thcl-unnumbered", "thcl-appendix"];
-
-/** A YAML scalar, quoted when it would otherwise be read differently. */
-function yamlString(v: string): string {
-	return /[:#,[\]{}&*!|>'"%@`]|^[-?\s]|\s$/.test(v) ? `"${v.replace(/"/g, "'")}"` : v;
-}
-
-/** Renames the heading `old` in `thcl-unnumbered` and `thcl-appendix`. A flow list `[a, b]` becomes
- *  a block list when the new name has a comma. */
-export function renameInFrontmatter(text: string, old: string, name: string): { text: string; count: number } {
-	const lines = text.split("\n");
-	if (lines[0] !== "---") return { text, count: 0 };
-	const key = headingKey(old);
-	const hit = (v: string) => headingKey(unquote(v)) === key;
-	let count = 0, inKey = false;
-	for (let i = 1; i < lines.length && lines[i] !== "---"; i++) {
-		const item = /^(\s+-\s+)(.*)$/.exec(lines[i]);
-		if (item) {
-			if (inKey && hit(item[2])) { lines[i] = item[1] + yamlString(name); count++; }
-			continue;
-		}
-		const m = /^([\w-]+):\s*(.*)$/.exec(lines[i]);
-		inKey = !!m && NAME_KEYS.includes(m[1]);
-		if (!m || !inKey || !m[2]) continue;
-		if (!m[2].startsWith("[")) {
-			if (hit(m[2])) { lines[i] = `${m[1]}: ${yamlString(name)}`; count++; }
-			continue;
-		}
-		const items = m[2].replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
-		if (!items.some(v => hit(v))) continue;
-		const renamed = items.map(v => hit(v) ? (count++, name) : v);
-		const block = renamed.some(v => v.includes(","));
-		const repl = block ? [`${m[1]}:`, ...renamed.map(v => `  - ${yamlString(v)}`)] : [`${m[1]}: [${renamed.map(yamlString).join(", ")}]`];
-		lines.splice(i, 1, ...repl);
-		i += repl.length - 1;
-	}
-	return { text: lines.join("\n"), count };
 }
