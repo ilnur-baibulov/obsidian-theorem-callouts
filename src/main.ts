@@ -7,7 +7,7 @@ import {
 } from "@codemirror/view";
 import { RangeSetBuilder, StateEffect, Text } from "@codemirror/state";
 import {
-	parseNote, ParsedNote, CalloutItem, EquationItem, HeadingItem, Item, Lang,
+	parseNote, ParsedNote, SectionOptions, CalloutItem, EquationItem, HeadingItem, Item, Lang,
 	PROOF, theoremType, refText, headingCaption, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
@@ -35,10 +35,14 @@ export default class TheoremCallouts extends Plugin {
 
 		this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
 		this.registerEditorExtension([this.refPlugin(), this.domPlugin()]);
+		// The properties panel is drawn after the note opens.
+		this.registerEvent(this.app.workspace.on("layout-change", () => window.setTimeout(() => this.markProperties(), 300)));
+		this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.markProperties(), 300)));
 
 		this.registerEvent(this.app.metadataCache.on("changed", (file, data) => {
-			const parsed = parseNote(data);
+			const parsed = this.parse(data);
 			this.fileCache.set(file.path, { mtime: file.stat.mtime, text: data, parsed });
+			this.markProperties();
 			const sig = signature(parsed);
 			if (this.signatures.get(file.path) !== sig) {
 				const first = !this.signatures.has(file.path);
@@ -51,7 +55,22 @@ export default class TheoremCallouts extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 		this.applyBodyClass();
+		// Section numbers depend on the settings: parse every note again.
+		this.fileCache.clear();
+		this.textCache.clear();
+		this.docCache = new WeakMap();
 		this.refreshAll(true);
+	}
+
+	sections(): SectionOptions {
+		return {
+			titleHeading: this.settings.titleHeading,
+			unnumbered: this.settings.unnumbered.split(",").map(n => n.trim()).filter(Boolean),
+		};
+	}
+
+	parse(text: string): ParsedNote {
+		return parseNote(text, this.sections());
 	}
 
 	private applyBodyClass() {
@@ -69,14 +88,14 @@ export default class TheoremCallouts extends Plugin {
 	private parseText(path: string, text: string): ParsedNote {
 		const c = this.textCache.get(path);
 		if (c && c.text === text) return c.parsed;
-		const parsed = parseNote(text);
+		const parsed = this.parse(text);
 		this.textCache.set(path, { text, parsed });
 		return parsed;
 	}
 
 	parseDoc(doc: Text): ParsedNote {
 		let p = this.docCache.get(doc);
-		if (!p) { p = parseNote(doc.toString()); this.docCache.set(doc, p); }
+		if (!p) { p = this.parse(doc.toString()); this.docCache.set(doc, p); }
 		return p;
 	}
 
@@ -95,7 +114,7 @@ export default class TheoremCallouts extends Plugin {
 		let p = this.loading.get(file.path);
 		if (!p) {
 			p = this.app.vault.cachedRead(file).then(text => {
-				const parsed = parseNote(text);
+				const parsed = this.parse(text);
 				this.fileCache.set(file.path, { mtime: file.stat.mtime, text, parsed });
 				this.signatures.set(file.path, signature(parsed));
 				this.loading.delete(file.path);
@@ -115,15 +134,23 @@ export default class TheoremCallouts extends Plugin {
 		return this.app.metadataCache.getFirstLinkpathDest(path, sourcePath);
 	}
 
-	resolveTarget(linktext: string, sourcePath: string, current: ParsedNote | null): { item: Item | null; pending: boolean } {
+	resolveTarget(linktext: string, sourcePath: string, current: ParsedNote | null): { item: Item | null; pending: boolean; parsed: ParsedNote | null } {
 		const lt = parseLinktext(linktext);
-		if (!lt) return { item: null, pending: false };
-		if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false };
+		if (!lt) return { item: null, pending: false, parsed: null };
+		if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false, parsed: current };
 		const file = this.linkFile(lt.path, sourcePath);
-		if (!file) return { item: null, pending: false };
-		if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false };
+		if (!file) return { item: null, pending: false, parsed: null };
+		if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false, parsed: current };
 		const parsed = this.getParsed(file);
-		return { item: parsed && findTarget(parsed, lt), pending: !parsed };
+		return { item: parsed && findTarget(parsed, lt), pending: !parsed, parsed };
+	}
+
+	/** Text a reference shows: the number, «??» for a heading that a note with numbered sections lacks
+	 *  (as LaTeX shows an undefined \ref, so a renamed heading is noticed), or null to keep the link as it is. */
+	refShown(linktext: string, sourcePath: string, current: ParsedNote | null): string | null {
+		const { item, parsed } = this.resolveTarget(linktext, sourcePath, current);
+		if (item) return refText(item);
+		return parsed?.numberSections && parseLinktext(linktext)?.heading ? "??" : null;
 	}
 
 	/** File and item a reference points to, loading the target note if needed. */
@@ -143,7 +170,9 @@ export default class TheoremCallouts extends Plugin {
 	async openRef(e: MouseEvent, linktext: string, sourcePath: string, current: ParsedNote | null) {
 		const newLeaf = Keymap.isModEvent(e);
 		const target = await this.locate(linktext, sourcePath, current);
-		if (target?.item.kind !== "equation") return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
+		// Obsidian gives a label inside a quote to the whole quote; a nested callout is opened at its own line.
+		const byLine = target?.item.kind === "equation" || (target?.item.kind === "callout" && target.item.depth > 1);
+		if (!target || !byLine) return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
 		await this.app.workspace.getLeaf(newLeaf).openFile(target.file, { eState: { line: target.item.line } });
 	}
 
@@ -184,6 +213,7 @@ export default class TheoremCallouts extends Plugin {
 	 *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
 	refEl(text: string, linktext: string, sourcePath: string, current: () => ParsedNote | null, source: "preview" | "editor"): HTMLElement {
 		const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+		span.toggleClass("theorem-ref-missing", text === "??");
 		const parent: HoverParent = { hoverPopover: null };
 		span.addEventListener("mousedown", e => {
 			e.stopPropagation();
@@ -221,6 +251,28 @@ export default class TheoremCallouts extends Plugin {
 		span.appendText(text.slice(pos));
 		finishRenderMath();
 		return span;
+	}
+
+	/** Marks a name in `thcl-unnumbered` or `thcl-appendix` that matches no heading, e.g. after a heading was renamed. */
+	markProperties() {
+		this.app.workspace.iterateAllLeaves(leaf => {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView) || !view.file) return;
+			const missing = new Set(this.fileCache.get(view.file.path)?.parsed.missing ?? []);
+			view.containerEl.querySelectorAll<HTMLElement>(".metadata-property[data-property-key^='thcl-']").forEach(prop => {
+				const pills = Array.from(prop.querySelectorAll<HTMLElement>(".multi-select-pill"));
+				const values = pills.length ? pills : Array.from(prop.querySelectorAll<HTMLElement>(".metadata-property-value"));
+				let any = false;
+				for (const v of values) {
+					const bad = missing.has((v.textContent ?? "").trim());
+					v.toggleClass("theorem-property-missing", bad);
+					if (bad) v.setAttribute("aria-label", "No heading with this name");
+					else v.removeAttribute("aria-label");
+					any ||= bad;
+				}
+				prop.toggleClass("theorem-property-has-missing", any);
+			});
+		});
 	}
 
 	refreshAll(rerenderReading: boolean) {
@@ -310,15 +362,15 @@ export default class TheoremCallouts extends Plugin {
 			const lt = parseLinktext(href);
 			if (!lt) return;
 			const aliased = !(a.textContent ?? "").includes(lt.label); // the link has its own alias
-			const set = (item: Item | null) => {
+			const set = (item: Item | null, target: ParsedNote | null) => {
 				if (item?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
-				const t = item && refText(item);
-				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); }
+				const t = item ? refText(item) : target?.numberSections && lt.heading ? "??" : null;
+				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); a.toggleClass("theorem-ref-missing", t === "??"); }
 			};
-			const { item, pending } = this.resolveTarget(href, sourcePath, current);
-			if (item || !pending) return set(item);
+			const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
+			if (item || !pending) return set(item, parsed);
 			const file = this.linkFile(lt.path, sourcePath);
-			if (file) this.loadNote(file).then(p => set(p.labels.get(lt.label) ?? null));
+			if (file) this.loadNote(file).then(p => set(findTarget(p, lt), p));
 		});
 	}
 
@@ -448,8 +500,7 @@ export default class TheoremCallouts extends Plugin {
 								b.add(a, z, Decoration.replace({ widget: new ProofWidget(plugin, m[2] as "begin" | "end", plugin.langOf(parsed), title, key, sourcePath) }));
 								continue;
 							}
-							const { item } = plugin.resolveTarget(m[1], sourcePath, parsed);
-							const text = item && refText(item);
+							const text = plugin.refShown(m[1], sourcePath, parsed);
 							if (text) b.add(a, z, Decoration.replace({ widget: new RefWidget(plugin, text, m[1], sourcePath) }));
 						}
 					}

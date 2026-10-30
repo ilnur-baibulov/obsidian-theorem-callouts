@@ -103,6 +103,10 @@ var PROOF = {
   ru: { begin: "\u0414\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E.", end: "\u25A1" },
   en: { begin: "Proof.", end: "\u25A1" }
 };
+var DEFAULT_SECTIONS = {
+  titleHeading: false,
+  unnumbered: ["References", "Bibliography", "\u041B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u0430", "\u0421\u043F\u0438\u0441\u043E\u043A \u043B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u044B"]
+};
 var HEADER = /^((?:>\s*)+)\[!([A-Za-z]+)(?:\|([^\]]*))?\]([+-]?)[ \t]*(.*)$/;
 var LABEL_LINE = /^\s*\^([A-Za-z0-9_-]+)\s*$/;
 var TRAILING_LABEL = /\$\$\s*\^([A-Za-z0-9_-]+)\s*$/;
@@ -145,11 +149,16 @@ function frontmatter(lines) {
   for (let i = 1; i < lines.length; i++) {
     if (lines[i] === "---") {
       const body = lines.slice(1, i);
+      const flag = (key) => {
+        const v = yamlValues(body, key)[0]?.toLowerCase();
+        return v === "true" ? true : v === "false" ? false : void 0;
+      };
       return {
         lang: yamlValues(body, "lang")[0],
-        numberSections: /^true$/i.test(yamlValues(body, "numbersections")[0] ?? ""),
-        unnumbered: yamlValues(body, "unnumbered"),
-        appendix: yamlValues(body, "appendix")[0],
+        numberSections: !!(flag("numbersections") ?? flag("thcl-numbersections")),
+        titleHeading: flag("thcl-title-heading"),
+        unnumbered: yamlValues(body, "thcl-unnumbered"),
+        appendix: yamlValues(body, "thcl-appendix")[0],
         end: i + 1
       };
     }
@@ -159,7 +168,7 @@ function frontmatter(lines) {
 function headingKey(text) {
   return text.replace(/[!-/:-@[-`{-~]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
 }
-function parseNote(text) {
+function parseNote(text, opts = DEFAULT_SECTIONS) {
   const lines = text.split("\n");
   const fm = frontmatter(lines);
   const lang = detectLang(text, fm.lang);
@@ -184,14 +193,26 @@ function parseNote(text) {
   let eqCounter = 0;
   let lastBlock = null;
   let lastBlockEnd = -1;
+  const lastNested = /* @__PURE__ */ new Map();
   for (let i = fm.end; i < lines.length; i++) {
     if (codeLines.has(i)) {
       lastBlock = null;
       continue;
     }
     const line = lines[i];
-    const lab = LABEL_LINE.exec(line);
-    if (lab && quoteDepth(line) === 0) {
+    const lab = LABEL_LINE.exec(stripQuote(line));
+    const d = quoteDepth(line);
+    if (lab && d > 0) {
+      const prev = lastNested.get(d + 1);
+      const gapOk = prev && lines.slice(prev.end + 1, i).every((l) => stripQuote(l).trim() === "") && i - prev.end <= 2;
+      if (prev && gapOk && !prev.item.label) {
+        prev.item.label = lab[1];
+        labels.set(lab[1], prev.item);
+      }
+      lastNested.delete(d + 1);
+      continue;
+    }
+    if (lab && d === 0) {
       const gapOk = lastBlock && lines.slice(lastBlockEnd + 1, i).every((l) => l.trim() === "") && i - lastBlockEnd <= 2;
       if (lastBlock && gapOk && !lastBlock.label) {
         lastBlock.label = lab[1];
@@ -226,7 +247,7 @@ function parseNote(text) {
         if (depth === 1) {
           lastBlock = item;
           lastBlockEnd = end;
-        }
+        } else lastNested.set(depth, { item, end });
       }
       continue;
     }
@@ -271,16 +292,18 @@ function parseNote(text) {
     }
     e.number = String(++eqCounter);
   }
-  if (fm.numberSections) numberHeadings(headings, lines, fm);
-  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, codeLines };
+  if (fm.numberSections) numberHeadings(headings, lines, fm, opts);
+  const keys = new Set(headings.map((h) => headingKey(h.text)));
+  const missing = [...fm.unnumbered, ...fm.appendix === void 0 ? [] : [fm.appendix]].filter((n) => !keys.has(headingKey(n)));
+  return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections: fm.numberSections, missing, codeLines };
 }
-function numberHeadings(headings, lines, fm) {
+function numberHeadings(headings, lines, fm, opts) {
   let list = headings;
   const first = lines.slice(fm.end).findIndex((l) => l.trim() !== "") + fm.end;
-  if (list[0]?.level === 1 && list[0].line === first && !list.slice(1).some((h) => h.level === 1)) list = list.slice(1);
+  if ((fm.titleHeading ?? opts.titleHeading) && list[0]?.line === first) list = list.slice(1);
   if (!list.length) return;
   const top = Math.min(...list.map((h) => h.level));
-  const unnumbered = new Set(fm.unnumbered.map(headingKey));
+  const unnumbered = new Set([...opts.unnumbered, ...fm.unnumbered].map(headingKey));
   const appendix = fm.appendix === void 0 ? null : headingKey(fm.appendix);
   const counters = [0, 0, 0];
   let inAppendix = false;
@@ -339,7 +362,9 @@ function withPeriod(text) {
 var import_obsidian = require("obsidian");
 var DEFAULT_SETTINGS = {
   language: "auto",
-  plainStyle: true
+  plainStyle: true,
+  titleHeading: DEFAULT_SECTIONS.titleHeading,
+  unnumbered: DEFAULT_SECTIONS.unnumbered.join(", ")
 };
 var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -356,6 +381,15 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
     }));
     new import_obsidian.Setting(containerEl).setName("Plain style").setDesc("Theorem callouts without box and icon, with a bold caption, as in a printed text. Off: Obsidian's usual callout look.").addToggle((t) => t.setValue(s.plainStyle).onChange((v) => {
       s.plainStyle = v;
+      this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Sections").setHeading().setDesc("Sections are numbered in notes with `numbersections: true` in the frontmatter.");
+    new import_obsidian.Setting(containerEl).setName("First heading is the title").setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.titleHeading).onChange((v) => {
+      s.titleHeading = v;
+      this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Unnumbered headings").setDesc("Headings that never get a number, separated by commas. `thcl-unnumbered` in a note's frontmatter adds to them.").addText((t) => t.setValue(s.unnumbered).onChange((v) => {
+      s.unnumbered = v;
       this.plugin.saveSettings();
     }));
   }
@@ -385,9 +419,12 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     }
     this.registerMarkdownPostProcessor((el, ctx) => this.postProcess(el, ctx), 100);
     this.registerEditorExtension([this.refPlugin(), this.domPlugin()]);
+    this.registerEvent(this.app.workspace.on("layout-change", () => window.setTimeout(() => this.markProperties(), 300)));
+    this.registerEvent(this.app.workspace.on("file-open", () => window.setTimeout(() => this.markProperties(), 300)));
     this.registerEvent(this.app.metadataCache.on("changed", (file, data) => {
-      const parsed = parseNote(data);
+      const parsed = this.parse(data);
       this.fileCache.set(file.path, { mtime: file.stat.mtime, text: data, parsed });
+      this.markProperties();
       const sig = signature(parsed);
       if (this.signatures.get(file.path) !== sig) {
         const first = !this.signatures.has(file.path);
@@ -399,7 +436,19 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
     this.applyBodyClass();
+    this.fileCache.clear();
+    this.textCache.clear();
+    this.docCache = /* @__PURE__ */ new WeakMap();
     this.refreshAll(true);
+  }
+  sections() {
+    return {
+      titleHeading: this.settings.titleHeading,
+      unnumbered: this.settings.unnumbered.split(",").map((n) => n.trim()).filter(Boolean)
+    };
+  }
+  parse(text) {
+    return parseNote(text, this.sections());
   }
   applyBodyClass() {
     document.body.toggleClass("theorem-callouts-plain", this.settings.plainStyle);
@@ -413,14 +462,14 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   parseText(path, text) {
     const c = this.textCache.get(path);
     if (c && c.text === text) return c.parsed;
-    const parsed = parseNote(text);
+    const parsed = this.parse(text);
     this.textCache.set(path, { text, parsed });
     return parsed;
   }
   parseDoc(doc) {
     let p = this.docCache.get(doc);
     if (!p) {
-      p = parseNote(doc.toString());
+      p = this.parse(doc.toString());
       this.docCache.set(doc, p);
     }
     return p;
@@ -439,7 +488,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     let p = this.loading.get(file.path);
     if (!p) {
       p = this.app.vault.cachedRead(file).then((text) => {
-        const parsed = parseNote(text);
+        const parsed = this.parse(text);
         this.fileCache.set(file.path, { mtime: file.stat.mtime, text, parsed });
         this.signatures.set(file.path, signature(parsed));
         this.loading.delete(file.path);
@@ -459,13 +508,20 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   }
   resolveTarget(linktext, sourcePath, current) {
     const lt = parseLinktext(linktext);
-    if (!lt) return { item: null, pending: false };
-    if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false };
+    if (!lt) return { item: null, pending: false, parsed: null };
+    if (lt.path === "" && current) return { item: findTarget(current, lt), pending: false, parsed: current };
     const file = this.linkFile(lt.path, sourcePath);
-    if (!file) return { item: null, pending: false };
-    if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false };
+    if (!file) return { item: null, pending: false, parsed: null };
+    if (file.path === sourcePath && current) return { item: findTarget(current, lt), pending: false, parsed: current };
     const parsed = this.getParsed(file);
-    return { item: parsed && findTarget(parsed, lt), pending: !parsed };
+    return { item: parsed && findTarget(parsed, lt), pending: !parsed, parsed };
+  }
+  /** Text a reference shows: the number, «??» for a heading that a note with numbered sections lacks
+   *  (as LaTeX shows an undefined \ref, so a renamed heading is noticed), or null to keep the link as it is. */
+  refShown(linktext, sourcePath, current) {
+    const { item, parsed } = this.resolveTarget(linktext, sourcePath, current);
+    if (item) return refText(item);
+    return parsed?.numberSections && parseLinktext(linktext)?.heading ? "??" : null;
   }
   /** File and item a reference points to, loading the target note if needed. */
   async locate(linktext, sourcePath, current) {
@@ -482,7 +538,8 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
   async openRef(e, linktext, sourcePath, current) {
     const newLeaf = import_obsidian2.Keymap.isModEvent(e);
     const target = await this.locate(linktext, sourcePath, current);
-    if (target?.item.kind !== "equation") return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
+    const byLine = target?.item.kind === "equation" || target?.item.kind === "callout" && target.item.depth > 1;
+    if (!target || !byLine) return this.app.workspace.openLinkText(linktext, sourcePath, newLeaf);
     await this.app.workspace.getLeaf(newLeaf).openFile(target.file, { eState: { line: target.item.line } });
   }
   /** Shows Obsidian's page preview for a reference. Obsidian finds block ids only at the end of a top-level
@@ -522,6 +579,7 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
    *  by block id, which fails for an equation inside a callout ("Unable to find"). Events stop here. */
   refEl(text, linktext, sourcePath, current, source) {
     const span = createSpan({ cls: "theorem-ref theorem-ref-link", text });
+    span.toggleClass("theorem-ref-missing", text === "??");
     const parent = { hoverPopover: null };
     span.addEventListener("mousedown", (e) => {
       e.stopPropagation();
@@ -561,6 +619,27 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
     span.appendText(text.slice(pos));
     (0, import_obsidian2.finishRenderMath)();
     return span;
+  }
+  /** Marks a name in `thcl-unnumbered` or `thcl-appendix` that matches no heading, e.g. after a heading was renamed. */
+  markProperties() {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view;
+      if (!(view instanceof import_obsidian2.MarkdownView) || !view.file) return;
+      const missing = new Set(this.fileCache.get(view.file.path)?.parsed.missing ?? []);
+      view.containerEl.querySelectorAll(".metadata-property[data-property-key^='thcl-']").forEach((prop) => {
+        const pills = Array.from(prop.querySelectorAll(".multi-select-pill"));
+        const values = pills.length ? pills : Array.from(prop.querySelectorAll(".metadata-property-value"));
+        let any = false;
+        for (const v of values) {
+          const bad = missing.has((v.textContent ?? "").trim());
+          v.toggleClass("theorem-property-missing", bad);
+          if (bad) v.setAttribute("aria-label", "No heading with this name");
+          else v.removeAttribute("aria-label");
+          any || (any = bad);
+        }
+        prop.toggleClass("theorem-property-has-missing", any);
+      });
+    });
   }
   refreshAll(rerenderReading) {
     this.app.workspace.iterateAllLeaves((leaf) => {
@@ -645,18 +724,19 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
       const lt = parseLinktext(href);
       if (!lt) return;
       const aliased = !(a.textContent ?? "").includes(lt.label);
-      const set = (item2) => {
+      const set = (item2, target) => {
         if (item2?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
-        const t = item2 && refText(item2);
+        const t = item2 ? refText(item2) : target?.numberSections && lt.heading ? "??" : null;
         if (t && !aliased) {
           a.setText(t);
           a.addClass("theorem-ref");
+          a.toggleClass("theorem-ref-missing", t === "??");
         }
       };
-      const { item, pending } = this.resolveTarget(href, sourcePath, current);
-      if (item || !pending) return set(item);
+      const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
+      if (item || !pending) return set(item, parsed);
       const file = this.linkFile(lt.path, sourcePath);
-      if (file) this.loadNote(file).then((p) => set(p.labels.get(lt.label) ?? null));
+      if (file) this.loadNote(file).then((p) => set(findTarget(p, lt), p));
     });
   }
   processProofs(el, lang, sourcePath, current) {
@@ -783,14 +863,13 @@ var TheoremCallouts = class extends import_obsidian2.Plugin {
               if (m[2]) {
                 const title = m[3] === void 0 ? null : m[3];
                 const key = title && title.replace(/\[\[([^\]|]+)\]\]/g, (_, lt) => {
-                  const { item: item2 } = plugin.resolveTarget(lt, sourcePath, parsed);
-                  return `[[${(item2 && refText(item2)) ?? lt}]]`;
+                  const { item } = plugin.resolveTarget(lt, sourcePath, parsed);
+                  return `[[${(item && refText(item)) ?? lt}]]`;
                 });
                 b.add(a, z, import_view.Decoration.replace({ widget: new ProofWidget(plugin, m[2], plugin.langOf(parsed), title, key, sourcePath) }));
                 continue;
               }
-              const { item } = plugin.resolveTarget(m[1], sourcePath, parsed);
-              const text = item && refText(item);
+              const text = plugin.refShown(m[1], sourcePath, parsed);
               if (text) b.add(a, z, import_view.Decoration.replace({ widget: new RefWidget(plugin, text, m[1], sourcePath) }));
             }
           }

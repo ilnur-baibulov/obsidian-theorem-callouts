@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseNote, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod, headingCaption } from "../src/parse.ts";
+import { parseNote, DEFAULT_SECTIONS, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod, headingCaption } from "../src/parse.ts";
 
 const note = `---
 created: 2026-10-19
@@ -106,9 +106,13 @@ numbersections: true
 ## в коде
 \`\`\`
 `;
-	const p = parseNote(src);
+	const p = parseNote(src, { ...DEFAULT_SECTIONS, titleHeading: true });
 	assert.deepEqual(p.headings.map(h => `${h.text}:${h.number}`),
 		["Заголовок заметки:null", "Введение:1", "Оценки:2", "Малый  след:2.1", "Слишком глубоко:2.1.1", "Итог:3"]);
+	// The note's own key overrides the setting.
+	const own = parseNote(src.replace("---\n#", "thcl-title-heading: false\n---\n#"), { ...DEFAULT_SECTIONS, titleHeading: true });
+	assert.deepEqual(own.headings.slice(0, 3).map(h => h.number), ["1", "1.1", "1.2"]);
+	assert.equal(parseNote(src).headings[0].number, "1");
 	const lt = parseLinktext("#Оценки#малый след")!;
 	assert.deepEqual(lt, { path: "", label: "малый след", heading: true });
 	assert.equal(refText(findTarget(p, lt)!), "2.1");
@@ -135,8 +139,8 @@ test("short type names", () => {
 test("unnumbered sections and the appendix", () => {
 	const p = parseNote(`---
 numbersections: true
-unnumbered: [Благодарности, "Литература"]
-appendix: Доказательства лемм
+thcl-unnumbered: [Благодарности, "Нет такого"]
+thcl-appendix: Доказательства лемм
 ---
 ## Благодарности
 ### Подраздел благодарностей
@@ -151,6 +155,13 @@ appendix: Доказательства лемм
 	assert.equal(headingCaption(p.headings[4], "ru"), "Приложение A.");
 	assert.equal(headingCaption(p.headings[5], "ru"), "A.1");
 	assert.equal(refText(p.headings[4]), "A");
-	const q = parseNote("---\nnumbersections: true\nunnumbered:\n  - Итог\n---\n## Начало\n## Итог\n");
+	assert.deepEqual(p.missing, ["Нет такого"]);
+	const q = parseNote("---\nthcl-numbersections: true\nthcl-unnumbered:\n  - Итог\n---\n## Начало\n## Итог\n");
 	assert.deepEqual(q.headings.map(h => h.number), ["1", null]);
+});
+
+test("a label inside a quote attaches to the callout nested there", () => {
+	const p = parseNote("> [!note]- Дополнения\n> Текст.\n>\n> > [!lemma]\n> > Утверждение.\n>\n> ^lem-x\n\n> [!theorem]\n> Т.\n^thm-y\n");
+	assert.equal(refText(p.labels.get("lem-x")!), "1");
+	assert.equal(refText(p.labels.get("thm-y")!), "2");
 });

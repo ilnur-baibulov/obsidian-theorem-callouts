@@ -87,8 +87,21 @@ export interface ParsedNote {
 	equations: EquationItem[];
 	labels: Map<string, Item>;
 	headings: HeadingItem[];
+	numberSections: boolean;
+	missing: string[];      // names in `thcl-unnumbered` and `thcl-appendix` that match no heading
 	codeLines: Set<number>; // lines inside fenced code blocks
 }
+
+/** How sections are numbered when a note does not say: from the plugin's settings. */
+export interface SectionOptions {
+	titleHeading: boolean; // the heading that opens a note is its title
+	unnumbered: string[];  // headings left without a number in every note
+}
+
+export const DEFAULT_SECTIONS: SectionOptions = {
+	titleHeading: false,
+	unnumbered: ["References", "Bibliography", "Литература", "Список литературы"],
+};
 
 const HEADER = /^((?:>\s*)+)\[!([A-Za-z]+)(?:\|([^\]]*))?\]([+-]?)[ \t]*(.*)$/;
 const LABEL_LINE = /^\s*\^([A-Za-z0-9_-]+)\s*$/;
@@ -122,9 +135,11 @@ export function detectLang(text: string, frontmatterLang?: string): Lang {
 	return cyr >= lat && cyr > 0 ? "ru" : "en";
 }
 
+// Keys of the plugin's own carry the prefix `thcl-`; `lang` and `numbersections` are pandoc's and mean the same there.
 interface Frontmatter {
 	lang?: string;
 	numberSections: boolean;
+	titleHeading?: boolean;
 	unnumbered: string[]; // headings left without a number
 	appendix?: string;    // heading from which top-level sections are lettered
 	end: number;
@@ -153,11 +168,16 @@ function frontmatter(lines: string[]): Frontmatter {
 	for (let i = 1; i < lines.length; i++) {
 		if (lines[i] === "---") {
 			const body = lines.slice(1, i);
+			const flag = (key: string) => {
+				const v = yamlValues(body, key)[0]?.toLowerCase();
+				return v === "true" ? true : v === "false" ? false : undefined;
+			};
 			return {
 				lang: yamlValues(body, "lang")[0],
-				numberSections: /^true$/i.test(yamlValues(body, "numbersections")[0] ?? ""),
-				unnumbered: yamlValues(body, "unnumbered"),
-				appendix: yamlValues(body, "appendix")[0],
+				numberSections: !!(flag("numbersections") ?? flag("thcl-numbersections")),
+				titleHeading: flag("thcl-title-heading"),
+				unnumbered: yamlValues(body, "thcl-unnumbered"),
+				appendix: yamlValues(body, "thcl-appendix")[0],
 				end: i + 1,
 			};
 		}
@@ -172,7 +192,7 @@ export function headingKey(text: string): string {
 	return text.replace(/[!-/:-@[-`{-~]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-export function parseNote(text: string): ParsedNote {
+export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS): ParsedNote {
 	const lines = text.split("\n");
 	const fm = frontmatter(lines);
 	const lang = detectLang(text, fm.lang);
@@ -201,13 +221,26 @@ export function parseNote(text: string): ParsedNote {
 	// Block that a following standalone label line attaches to.
 	let lastBlock: Item | null = null;
 	let lastBlockEnd = -1;
+	// Inside a quote, `> ^label` attaches to a callout one level deeper that has just ended.
+	const lastNested = new Map<number, { item: CalloutItem; end: number }>();
 
 	for (let i = fm.end; i < lines.length; i++) {
 		if (codeLines.has(i)) { lastBlock = null; continue; }
 		const line = lines[i];
 
-		const lab = LABEL_LINE.exec(line);
-		if (lab && quoteDepth(line) === 0) {
+		const lab = LABEL_LINE.exec(stripQuote(line));
+		const d = quoteDepth(line);
+		if (lab && d > 0) {
+			const prev = lastNested.get(d + 1);
+			const gapOk = prev && lines.slice(prev.end + 1, i).every(l => stripQuote(l).trim() === "") && i - prev.end <= 2;
+			if (prev && gapOk && !prev.item.label) {
+				prev.item.label = lab[1];
+				labels.set(lab[1], prev.item);
+			}
+			lastNested.delete(d + 1);
+			continue;
+		}
+		if (lab && d === 0) {
 			// A label on its own line attaches to the previous block,
 			// possibly separated by one blank line.
 			const gapOk = lastBlock && lines.slice(lastBlockEnd + 1, i).every(l => l.trim() === "") && i - lastBlockEnd <= 2;
@@ -237,6 +270,7 @@ export function parseNote(text: string): ParsedNote {
 				};
 				callouts.push(item);
 				if (depth === 1) { lastBlock = item; lastBlockEnd = end; }
+				else lastNested.set(depth, { item, end });
 			}
 			// Do not skip the body: nested callouts and equations inside are parsed too.
 			continue;
@@ -279,22 +313,24 @@ export function parseNote(text: string): ParsedNote {
 		e.number = String(++eqCounter);
 	}
 
-	if (fm.numberSections) numberHeadings(headings, lines, fm);
+	if (fm.numberSections) numberHeadings(headings, lines, fm, opts);
+	const keys = new Set(headings.map(h => headingKey(h.text)));
+	const missing = [...fm.unnumbered, ...(fm.appendix === undefined ? [] : [fm.appendix])].filter(n => !keys.has(headingKey(n)));
 
-	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, codeLines };
+	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections: fm.numberSections, missing, codeLines };
 }
 
-/** Numbers sections as LaTeX does, three levels deep. A `#` heading that opens the note is its title
- *  (the PDF export takes it so) unless there are other `#` headings; the top remaining level is the section.
- *  Headings listed in `unnumbered` stay without a number, with everything under them; from the `appendix`
- *  heading on, sections are lettered A, B and their subsections A.1. */
-function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatter) {
+/** Numbers sections as LaTeX does, three levels deep, from the top heading level used. With `thcl-title-heading`
+ *  (or the setting) the heading that opens the note is its title and has no number; the PDF export takes it so.
+ *  Headings listed in the setting or in `thcl-unnumbered` stay without a number, with everything under them;
+ *  from the `thcl-appendix` heading on, sections are lettered A, B and their subsections A.1. */
+function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatter, opts: SectionOptions) {
 	let list = headings;
 	const first = lines.slice(fm.end).findIndex(l => l.trim() !== "") + fm.end;
-	if (list[0]?.level === 1 && list[0].line === first && !list.slice(1).some(h => h.level === 1)) list = list.slice(1);
+	if ((fm.titleHeading ?? opts.titleHeading) && list[0]?.line === first) list = list.slice(1);
 	if (!list.length) return;
 	const top = Math.min(...list.map(h => h.level));
-	const unnumbered = new Set(fm.unnumbered.map(headingKey));
+	const unnumbered = new Set([...opts.unnumbered, ...fm.unnumbered].map(headingKey));
 	const appendix = fm.appendix === undefined ? null : headingKey(fm.appendix);
 	const counters = [0, 0, 0];
 	let inAppendix = false;

@@ -54,3 +54,11 @@
 
 /* Section number before a heading, as in LaTeX. */
 .theorem-heading-number { padding-right: 0.6em; }
+
+/* A reference to a heading that a note with numbered sections lacks, and a name in the frontmatter that matches no heading. */
+.theorem-ref-missing,
+.theorem-property-missing,
+.theorem-property-missing .multi-select-pill-content,
+.theorem-property-missing .metadata-input-longtext {
+	color: var(--text-error);
+}
