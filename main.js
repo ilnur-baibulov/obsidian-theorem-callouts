@@ -186,6 +186,7 @@ function frontmatter(lines) {
         lang: yamlValues(body, "lang")[0],
         numberSections: flag("numbersections") ?? flag("thcl-numbersections"),
         titleHeading: flag("thcl-title-heading"),
+        numberWithin: flag("thcl-number-within"),
         end: i + 1
       };
     }
@@ -322,7 +323,7 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
   const numberSections = fm.numberSections ?? opts.numberSections;
   if (numberSections) numberHeadings(headings, lines, fm, opts);
   const tops = headings.filter((h) => h.number && !h.number.includes("."));
-  const within = numberSections && opts.numberWithin && tops.length > 0;
+  const within = numberSections && (fm.numberWithin ?? opts.numberWithin) && tops.length > 0;
   const counterAt = () => {
     let section = "0", k = 0;
     return (line) => {
@@ -499,7 +500,7 @@ var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
       s.numberSections = v;
       save();
     }));
-    new import_obsidian.Setting(containerEl).setName("Number statements within sections").setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: \xABTheorem 2.3\xBB, \xAB(2.1)\xBB.").addToggle((t) => t.setValue(s.numberWithin).onChange((v) => {
+    new import_obsidian.Setting(containerEl).setName("Number statements within sections").setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: \xABTheorem 2.3\xBB, \xAB(2.1)\xBB. `thcl-number-within: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.numberWithin).onChange((v) => {
       s.numberWithin = v;
       save();
     }));

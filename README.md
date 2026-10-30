@@ -41,6 +41,7 @@ $$\tau(h)<\varepsilon$$ ^eq-trace
 | `^-` or `^-sec-est` below a heading | no number, also for the headings under it; `[[#^sec-est]]` shows the heading's text |
 | `^app-proofs` below a top-level heading, with the setting **Appendix** on | from this heading on, sections are lettered `A`, `B`, subsections `A.1`; `[[#^app-proofs]]` shows `A` |
 | `thcl-title-heading: true` | the heading that opens the note is its title and gets no number |
+| `thcl-number-within: true` | statements and equations numbered within sections, `Theorem 2.3`, `(2.1)` |
 
 Built-in types: `theorem`, `lemma`, `proposition`, `corollary`, `definition`, `remark`, `example`, `claim`, `axiom`, `assumption`, `exercise`, `conjecture`, `hypothesis`, or Math Booster's short names `thm`, `lem`, `prp`, `cor`, `def`, `rmk`, `exm`, `clm`, `axm`, `asm`, `exr`, `cnj`, `hyp`. Types of your own, such as `problem`, are added in the settings. All of them share one counter per note. A label is a block id on its own line right after the callout, with or without a blank line between them; for a callout nested in another one, such as a folded `> [!note]-`, the label goes inside the outer callout, `> ^lem-a`. A label starting with `-` is the plugin's: `^-` leaves a section without a number. A link with an alias, `[[#^lem-a|this lemma]]`, keeps the alias. A labelled equation is written on one line, `$$…$$ ^eq-trace`, because Obsidian closes a multi-line `$$` block only on a line that holds `$$` alone, so a label there breaks the rendering.
 
@@ -69,7 +70,7 @@ If Math Booster is enabled, disable it, otherwise captions are processed twice.
 - **Caption language**: language of «Theorem», «Proof» for notes without `lang:` in the frontmatter. By default it is detected from the note's prose.
 - **Plain style** (on by default): theorem callouts without box and icon, with a bold caption. Turn it off to keep Obsidian's usual callout look.
 - **References show** (the number by default): what `[[#^lem-a]]` shows for a statement, «3», «Lemma 3» or «Lemma 3 (small trace)», as Math Booster does. With the number only, the word stays in your text and takes its case.
-- **Number statements within sections** (off by default): in a note with numbered sections, statements and equations are numbered anew in each section, «Theorem 2.3», «(2.1)», as LaTeX's `\numberwithin`.
+- **Number statements within sections** (off by default): in a note with numbered sections, statements and equations are numbered anew in each section, «Theorem 2.3», «(2.1)», as LaTeX's `\numberwithin`; `thcl-number-within: true` / `false` in a note wins.
 - **Number sections** (off by default): number the headings of every note; `numbersections` in a note wins.
 - **Appendix** (off by default): a label `^app-name` below a top-level heading starts the appendix. Off, such a label is an ordinary one.
 - **First heading is the title** (off by default): in a note with numbered sections, the heading that opens the note is its title and gets no number. `thcl-title-heading` in a note wins.

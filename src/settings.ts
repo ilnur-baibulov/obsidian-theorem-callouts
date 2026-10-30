@@ -80,7 +80,7 @@ export class TheoremSettingTab extends PluginSettingTab {
 			.setDesc("Number the headings of every note: «1», «2.1». `numbersections: true` / `false` in a note's frontmatter wins. `^-` on the line below a heading leaves it without a number; a label `^name` there lets `[[#^name]]` show the number.")
 			.addToggle(t => t.setValue(s.numberSections).onChange(v => { s.numberSections = v; save(); }));
 		new Setting(containerEl).setName("Number statements within sections")
-			.setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: «Theorem 2.3», «(2.1)».")
+			.setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: «Theorem 2.3», «(2.1)». `thcl-number-within: true` / `false` in a note's frontmatter wins.")
 			.addToggle(t => t.setValue(s.numberWithin).onChange(v => { s.numberWithin = v; save(); }));
 		new Setting(containerEl).setName("Appendix")
 			.setDesc("A label `^app-name` on the line below a top-level heading starts the appendix: from that heading on, sections are lettered A, B, subsections A.1, and `[[#^app-name]]` shows «A». The word «Appendix» is not added; write it in the heading if you want it. Off: `^app-name` is an ordinary label.")

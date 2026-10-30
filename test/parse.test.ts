@@ -231,4 +231,7 @@ $$y$$ ^eq-b
 	assert.equal(refText(p.labels.get("eq-b")!), "(2.1)");
 	assert.equal(refText(p.labels.get("eq-a")!), "(1.1)");
 	assert.deepEqual(parseNote(src).callouts.map(c => c.number), ["1", "2", "3", "4"]);
+	// The note's own key overrides the setting.
+	assert.equal(parseNote(src.replace("---\n>", "thcl-number-within: true\n---\n>")).callouts[1].number, "1.1");
+	assert.equal(parseNote(src.replace("---\n>", "thcl-number-within: false\n---\n>"), { ...DEFAULT_SECTIONS, numberWithin: true }).callouts[1].number, "2");
 });

@@ -17,6 +17,7 @@
 --   # Heading + ^app-name     -> \appendix before it, with the plugin's Appendix setting on
 --   [[#Heading]]              -> the heading's text
 --   thcl-title-heading: true  -> the heading that opens the note becomes the title
+--   thcl-number-within: true  -> statements and equations numbered within sections, \numberwithin
 --   The language (ru/en) comes from `lang:` or the prose.
 --   Notes of other files are looked up in the vault: the nearest folder above the input file
 --   that contains `.obsidian`, or $OBSIDIAN_VAULT. The plugin's settings (numbered sections,
@@ -160,9 +161,9 @@ end
 -- Numbers of labelled statements and equations in a parsed document, as the plugin shows them, and the type
 -- and title of each labelled statement. `nums` are the section numbers by block index: with the setting
 -- to number within sections, the counters start anew at each numbered top-level section, as \numberwithin does.
-local function number_labels(blocks, nums)
+local function number_labels(blocks, nums, within)
   local numbers, kinds, counter, eq, section = {}, {}, 0, 0, "0"
-  local within = SETTINGS.numberWithin and nums and next(nums) ~= nil
+  within = within and nums and next(nums) ~= nil
   local function shown(k) return within and section .. "." .. k or tostring(k) end
   local function visit(list, top)
     for i, b in ipairs(list) do
@@ -209,6 +210,13 @@ local function numbered(doc)
     if type(doc.meta[k]) == "boolean" then return doc.meta[k] end
   end
   return SETTINGS.numberSections
+end
+
+-- `thcl-number-within` in the note, otherwise the plugin's setting.
+local function number_within(doc)
+  local v = doc.meta["thcl-number-within"]
+  if type(v) == "boolean" then return v end
+  return SETTINGS.numberWithin
 end
 
 -- `thcl-title-heading` in the note, otherwise the plugin's setting.
@@ -296,7 +304,7 @@ local function external_number(note, label)
         if doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then doc.blocks:remove(1) end
         local nums, labels = number_headings(doc.blocks, numbered(doc))
         local kinds
-        numbers, kinds = number_labels(doc.blocks, nums)
+        numbers, kinds = number_labels(doc.blocks, nums, number_within(doc))
         -- A statement shows its name, or its name and title, when the setting asks so.
         local l = detect_lang(doc)
         for lab, kind in pairs(kinds) do
@@ -570,6 +578,6 @@ function Pandoc(doc)
   doc = doc:walk({ Blocks = process_blocks })
 
   -- \newtheorem is allowed in the body; header-includes would be overridden by include-in-header.
-  doc.blocks:insert(1, theorem_header(on and SETTINGS.numberWithin))
+  doc.blocks:insert(1, theorem_header(on and number_within(doc)))
   return doc
 end

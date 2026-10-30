@@ -178,6 +178,7 @@ interface Frontmatter {
 	lang?: string;
 	numberSections?: boolean;
 	titleHeading?: boolean;
+	numberWithin?: boolean;
 	end: number;
 }
 
@@ -212,6 +213,7 @@ function frontmatter(lines: string[]): Frontmatter {
 				lang: yamlValues(body, "lang")[0],
 				numberSections: flag("numbersections") ?? flag("thcl-numbersections"),
 				titleHeading: flag("thcl-title-heading"),
+				numberWithin: flag("thcl-number-within"),
 				end: i + 1,
 			};
 		}
@@ -349,7 +351,7 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 	// Within sections, as LaTeX's \numberwithin: the counters start anew at each numbered top-level section,
 	// whose number goes in front; before the first one it is 0.
 	const tops = headings.filter(h => h.number && !h.number.includes("."));
-	const within = numberSections && opts.numberWithin && tops.length > 0;
+	const within = numberSections && (fm.numberWithin ?? opts.numberWithin) && tops.length > 0;
 	const counterAt = () => {
 		let section = "0", k = 0;
 		return (line: number) => {
