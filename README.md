@@ -112,7 +112,7 @@ What is different is the implementation. The TypeScript code is written from scr
 
 A note written for Math Booster with its default settings renders here differently in these respects:
 
-- A reference shows the number only, «3», where Math Booster shows «Theorem 3 (title)», and «Note > Theorem 3» for another note. Write the word in the text: «by Lemma [[#^lem-a]]».
+- By default a reference shows the number only, «3», where Math Booster shows «Theorem 3 (title)»: write the word in the text, «by Lemma [[#^lem-a]]», or set **References show**. A reference to another note never shows «Note > Theorem 3».
 - Numbers have no prefix taken from the note's name: in a note «3.2 Compact operators» Math Booster numbers «Theorem 3.2.1», here «Theorem 1».
 - Every labelled equation is numbered, whether or not something refers to it; a multi-line `align` gets one number, not one per line.
 - Not supported: the linked proof `` `\begin{proof}`@[[…]] ``, `%% display: … %%` comments, the version 1 header `[!math|{…}]`, profiles and per-note settings.
