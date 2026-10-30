@@ -1,13 +1,24 @@
 // Pure parsing of a note: theorem callouts, display equations, block labels.
 // No Obsidian imports, so it can be tested with plain Node.
 
-export type Lang = "ru" | "en";
+/** A language code: "ru", "en", or one added in the settings. */
+export type Lang = string;
 
 export const THEOREM_TYPES = [
 	"theorem", "lemma", "proposition", "corollary", "definition", "remark",
 	"example", "claim", "axiom", "assumption", "exercise", "conjecture", "hypothesis",
 ] as const;
-export type TheoremType = (typeof THEOREM_TYPES)[number];
+/** A built-in type or one added in the settings. */
+export type TheoremType = string;
+
+/** How a statement is set, as amsthm's theorem styles: italic body, upright body, upright with an italic caption. */
+export type Style = "plain" | "definition" | "remark";
+
+export const STYLES: Record<string, Style> = {
+	theorem: "plain", lemma: "plain", proposition: "plain", corollary: "plain", claim: "plain",
+	conjecture: "plain", hypothesis: "plain", definition: "definition", example: "definition",
+	exercise: "definition", axiom: "definition", assumption: "definition", remark: "remark",
+};
 
 /** Short names, as Math Booster accepts them: `[!thm]` is `[!theorem]`. */
 export const TYPE_ALIASES: Record<string, TheoremType> = {
@@ -15,32 +26,59 @@ export const TYPE_ALIASES: Record<string, TheoremType> = {
 	clm: "claim", asm: "assumption", exm: "example", exr: "exercise", cnj: "conjecture", hyp: "hypothesis", rmk: "remark",
 };
 
-/** Theorem type of a callout type, full or short, or null for any other callout. */
-export function theoremType(t: string | null | undefined): TheoremType | null {
-	const k = t?.toLowerCase() ?? "";
-	return (THEOREM_TYPES as readonly string[]).includes(k) ? k as TheoremType : TYPE_ALIASES[k] ?? null;
-}
-
-export const NAMES: Record<Lang, Record<TheoremType, string>> = {
+/** Caption words of the built-in languages; `proof` is the word of the proof. */
+export const NAMES: Record<string, Record<string, string>> = {
 	ru: {
 		theorem: "Теорема", lemma: "Лемма", proposition: "Предложение", corollary: "Следствие",
 		definition: "Определение", remark: "Замечание", example: "Пример", claim: "Утверждение",
 		axiom: "Аксиома", assumption: "Предположение", exercise: "Упражнение",
-		conjecture: "Гипотеза", hypothesis: "Гипотеза",
+		conjecture: "Гипотеза", hypothesis: "Гипотеза", proof: "Доказательство",
 	},
 	en: {
 		theorem: "Theorem", lemma: "Lemma", proposition: "Proposition", corollary: "Corollary",
 		definition: "Definition", remark: "Remark", example: "Example", claim: "Claim",
 		axiom: "Axiom", assumption: "Assumption", exercise: "Exercise",
-		conjecture: "Conjecture", hypothesis: "Hypothesis",
+		conjecture: "Conjecture", hypothesis: "Hypothesis", proof: "Proof",
 	},
 };
 
+/** What the settings add: words per language, which override and extend NAMES, and types of statements. */
+export interface Captions {
+	words: Record<Lang, Record<string, string>>;
+	types: Record<string, Style>;
+}
 
-export const PROOF: Record<Lang, { begin: string; end: string }> = {
-	ru: { begin: "Доказательство.", end: "□" },
-	en: { begin: "Proof.", end: "□" },
-};
+let captions: Captions = { words: {}, types: {} };
+
+export function setCaptions(c: Captions) { captions = c; }
+
+/** Languages with caption words: the built-in ones and those added in the settings. */
+export function languages(): Lang[] {
+	return [...new Set([...Object.keys(NAMES), ...Object.keys(captions.words)])];
+}
+
+/** Types of statements: the built-in ones, then those added in the settings. */
+export function theoremTypes(): TheoremType[] {
+	return [...THEOREM_TYPES, ...Object.keys(captions.types).filter(t => !(t in STYLES))];
+}
+
+export function styleOf(type: TheoremType): Style {
+	return STYLES[type] ?? captions.types[type] ?? "plain";
+}
+
+/** Caption word of a type, or `proof`, in a language: the settings, the built-in table, English, the type itself. */
+export function word(key: string, lang: Lang): string {
+	return captions.words[lang]?.[key] || NAMES[lang]?.[key] || NAMES.en[key] || key[0].toUpperCase() + key.slice(1);
+}
+
+/** Theorem type of a callout type, full or short, or null for any other callout. */
+export function theoremType(t: string | null | undefined): TheoremType | null {
+	const k = t?.toLowerCase() ?? "";
+	if (k in STYLES || k in captions.types) return k;
+	return TYPE_ALIASES[k] ?? null;
+}
+
+export const PROOF_END = "□";
 
 export interface CalloutItem {
 	kind: "callout";
@@ -89,6 +127,7 @@ export interface ParsedNote {
 export interface SectionOptions {
 	numberSections: boolean; // in notes without `numbersections` in the frontmatter
 	appendix: boolean;       // `^app-name` below a top-level heading starts the appendix
+	numberWithin: boolean;   // with numbered sections, statements and equations are numbered within sections: 2.3
 	titleHeading: boolean; // the heading that opens a note is its title
 	unnumbered: string[];  // headings left without a number in every note
 }
@@ -96,6 +135,7 @@ export interface SectionOptions {
 export const DEFAULT_SECTIONS: SectionOptions = {
 	numberSections: false,
 	appendix: false,
+	numberWithin: false,
 	titleHeading: false,
 	unnumbered: ["References", "Bibliography", "Литература", "Список литературы"],
 };
@@ -116,9 +156,10 @@ function stripQuote(line: string): string {
 
 export function detectLang(text: string, frontmatterLang?: string): Lang {
 	if (frontmatterLang) {
+		// `de-CH` takes the table of `de`.
 		const l = frontmatterLang.trim().toLowerCase();
-		if (l.startsWith("ru")) return "ru";
-		if (l.startsWith("en")) return "en";
+		const known = languages().find(k => l === k.toLowerCase() || l.startsWith(k.toLowerCase() + "-"));
+		if (known) return known;
 	}
 	const prose = text
 		.replace(/^---\n[\s\S]*?\n---\n/, "")
@@ -209,8 +250,7 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 		}
 	}
 
-	let counter = 0;
-	let eqCounter = 0;
+	const auto = new Set<number>(); // indices of callouts numbered by the counter
 	// Block that a following standalone label line attaches to.
 	let lastBlock: Item | null = null;
 	let lastBlockEnd = -1;
@@ -259,7 +299,7 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 			if (type) {
 				const meta = h[3];
 				let number: string | null;
-				if (meta === undefined || meta.trim() === "") number = String(++counter);
+				if (meta === undefined || meta.trim() === "") { number = null; auto.add(callouts.length); }
 				else if (meta.trim() === "*") number = null;
 				else number = meta.trim();
 				const item: CalloutItem = {
@@ -303,17 +343,33 @@ export function parseNote(text: string, opts: SectionOptions = DEFAULT_SECTIONS)
 		if (line.trim() !== "" && quoteDepth(line) === 0) lastBlock = null;
 	}
 
+	const numberSections = fm.numberSections ?? opts.numberSections;
+	if (numberSections) numberHeadings(headings, lines, fm, opts);
+
+	// Within sections, as LaTeX's \numberwithin: the counters start anew at each numbered top-level section,
+	// whose number goes in front; before the first one it is 0.
+	const tops = headings.filter(h => h.number && !h.number.includes("."));
+	const within = numberSections && opts.numberWithin && tops.length > 0;
+	const counterAt = () => {
+		let section = "0", k = 0;
+		return (line: number) => {
+			const s = within ? [...tops].reverse().find(h => h.line < line)?.number ?? "0" : "";
+			if (s !== section) { section = s; k = 0; }
+			return within ? `${s}.${++k}` : String(++k);
+		};
+	};
+	const next = counterAt();
+	callouts.forEach((c, k) => { if (auto.has(k)) c.number = next(c.line); });
+
 	// Only labelled equations without an explicit \tag are numbered.
+	const nextEq = counterAt();
 	for (const e of equations) {
 		if (!e.label) continue;
 		const src = lines.slice(e.line, e.endLine + 1).join("\n");
 		const tag = /\\tag(\*?)\{([^}]*)\}/.exec(src);
 		if (tag) { e.tag = tag[1] ? tag[2] : `(${tag[2]})`; continue; }
-		e.number = String(++eqCounter);
+		e.number = nextEq(e.line);
 	}
-
-	const numberSections = fm.numberSections ?? opts.numberSections;
-	if (numberSections) numberHeadings(headings, lines, fm, opts);
 
 	return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines };
 }
@@ -348,11 +404,14 @@ function numberHeadings(headings: HeadingItem[], lines: string[], fm: Frontmatte
 	}
 }
 
-/** Text shown for a reference to `item`, or null if it has no number; a section without a number shows its heading. */
-export function refText(item: Item): string | null {
+/** Text shown for a reference to `item`, or null if it has no number; a section without a number shows its heading.
+ *  A statement shows its number, or with `shows` its name, «Лемма 3», or its name and title, «Лемма 3 (малый след)». */
+export function refText(item: Item, lang: Lang = "en", shows: "number" | "name" | "full" = "number"): string | null {
 	if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
 	if (item.kind === "heading") return item.number ?? item.text;
-	return item.number;
+	if (item.number === null || shows === "number") return item.number;
+	const name = captionHead(item, lang);
+	return shows === "full" && item.title ? `${name} (${item.title})` : name;
 }
 
 /** Item a link `#^label` points to. A link to a heading by its name stays an ordinary link. */
@@ -362,7 +421,7 @@ export function findTarget(p: ParsedNote, lt: { label: string; heading: boolean 
 
 /** Caption of a theorem callout, e.g. «Лемма 5 (малый след).» — title is passed separately as HTML. */
 export function captionHead(item: CalloutItem, lang: Lang): string {
-	const name = NAMES[lang][item.type];
+	const name = word(item.type, lang);
 	return item.number === null ? name : `${name} ${item.number}`;
 }
 

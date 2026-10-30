@@ -8,7 +8,8 @@
   [data-callout="assumption"], [data-callout="exercise"], [data-callout="conjecture"],
   [data-callout="hypothesis"], [data-callout="axm"], [data-callout="def"], [data-callout="lem"],
   [data-callout="prp"], [data-callout="thm"], [data-callout="cor"], [data-callout="clm"], [data-callout="asm"],
-  [data-callout="exm"], [data-callout="exr"], [data-callout="cnj"], [data-callout="hyp"], [data-callout="rmk"]) {
+  [data-callout="exm"], [data-callout="exr"], [data-callout="cnj"], [data-callout="hyp"], [data-callout="rmk"],
+  .theorem-callout) {
   --callout-color: var(--text-normal);
   background-color: transparent;
   border: none;
@@ -20,12 +21,11 @@
 .theorem-callouts-plain .callout.theorem-callout .callout-title { color: var(--text-normal); }
 .theorem-callout .theorem-callout-main-title { font-weight: bold; }
 .theorem-callout .theorem-callout-subtitle { font-weight: normal; }
-.theorem-callouts-plain .callout.theorem-callout:is(.theorem-callout-theorem, .theorem-callout-lemma, .theorem-callout-proposition,
-  .theorem-callout-corollary, .theorem-callout-claim, .theorem-callout-conjecture,
-  .theorem-callout-hypothesis).theorem-callout-en .callout-content { font-style: italic; }
+/* Statements of the plain style (theorems, lemmas, …) are italic, except in Russian, as Russian books set them. */
+.theorem-callouts-plain .callout.theorem-callout.theorem-style-plain:not(.theorem-callout-ru) .callout-content { font-style: italic; }
 
 .theorem-proof-begin { font-weight: bold; padding-right: 0.4em; }
-.theorem-proof-begin.theorem-proof-en { font-style: italic; }
+.theorem-proof-begin:not(.theorem-proof-ru) { font-style: italic; }
 .theorem-proof-end { float: right; }
 
 /* display: block also for `$$…$$` inside a paragraph, which Obsidian may render as an inline span. */
@@ -55,10 +55,5 @@
 /* Section number before a heading, as in LaTeX. */
 .theorem-heading-number { padding-right: 0.6em; }
 
-/* A reference to a heading that a note with numbered sections lacks, and a name in the frontmatter that matches no heading. */
-.theorem-ref-missing,
-.theorem-property-missing,
-.theorem-property-missing .multi-select-pill-content,
-.theorem-property-missing .metadata-input-longtext {
-	color: var(--text-error);
-}
+/* A reference whose target is not found. */
+.theorem-ref-missing { color: var(--text-error); }

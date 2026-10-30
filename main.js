@@ -43,6 +43,21 @@ var THEOREM_TYPES = [
   "conjecture",
   "hypothesis"
 ];
+var STYLES = {
+  theorem: "plain",
+  lemma: "plain",
+  proposition: "plain",
+  corollary: "plain",
+  claim: "plain",
+  conjecture: "plain",
+  hypothesis: "plain",
+  definition: "definition",
+  example: "definition",
+  exercise: "definition",
+  axiom: "definition",
+  assumption: "definition",
+  remark: "remark"
+};
 var TYPE_ALIASES = {
   axm: "axiom",
   def: "definition",
@@ -58,10 +73,6 @@ var TYPE_ALIASES = {
   hyp: "hypothesis",
   rmk: "remark"
 };
-function theoremType(t) {
-  const k = t?.toLowerCase() ?? "";
-  return THEOREM_TYPES.includes(k) ? k : TYPE_ALIASES[k] ?? null;
-}
 var NAMES = {
   ru: {
     theorem: "\u0422\u0435\u043E\u0440\u0435\u043C\u0430",
@@ -76,7 +87,8 @@ var NAMES = {
     assumption: "\u041F\u0440\u0435\u0434\u043F\u043E\u043B\u043E\u0436\u0435\u043D\u0438\u0435",
     exercise: "\u0423\u043F\u0440\u0430\u0436\u043D\u0435\u043D\u0438\u0435",
     conjecture: "\u0413\u0438\u043F\u043E\u0442\u0435\u0437\u0430",
-    hypothesis: "\u0413\u0438\u043F\u043E\u0442\u0435\u0437\u0430"
+    hypothesis: "\u0413\u0438\u043F\u043E\u0442\u0435\u0437\u0430",
+    proof: "\u0414\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E"
   },
   en: {
     theorem: "Theorem",
@@ -91,16 +103,36 @@ var NAMES = {
     assumption: "Assumption",
     exercise: "Exercise",
     conjecture: "Conjecture",
-    hypothesis: "Hypothesis"
+    hypothesis: "Hypothesis",
+    proof: "Proof"
   }
 };
-var PROOF = {
-  ru: { begin: "\u0414\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E.", end: "\u25A1" },
-  en: { begin: "Proof.", end: "\u25A1" }
-};
+var captions = { words: {}, types: {} };
+function setCaptions(c) {
+  captions = c;
+}
+function languages() {
+  return [.../* @__PURE__ */ new Set([...Object.keys(NAMES), ...Object.keys(captions.words)])];
+}
+function theoremTypes() {
+  return [...THEOREM_TYPES, ...Object.keys(captions.types).filter((t) => !(t in STYLES))];
+}
+function styleOf(type) {
+  return STYLES[type] ?? captions.types[type] ?? "plain";
+}
+function word(key, lang) {
+  return captions.words[lang]?.[key] || NAMES[lang]?.[key] || NAMES.en[key] || key[0].toUpperCase() + key.slice(1);
+}
+function theoremType(t) {
+  const k = t?.toLowerCase() ?? "";
+  if (k in STYLES || k in captions.types) return k;
+  return TYPE_ALIASES[k] ?? null;
+}
+var PROOF_END = "\u25A1";
 var DEFAULT_SECTIONS = {
   numberSections: false,
   appendix: false,
+  numberWithin: false,
   titleHeading: false,
   unnumbered: ["References", "Bibliography", "\u041B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u0430", "\u0421\u043F\u0438\u0441\u043E\u043A \u043B\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u044B"]
 };
@@ -118,8 +150,8 @@ function stripQuote(line) {
 function detectLang(text, frontmatterLang) {
   if (frontmatterLang) {
     const l = frontmatterLang.trim().toLowerCase();
-    if (l.startsWith("ru")) return "ru";
-    if (l.startsWith("en")) return "en";
+    const known = languages().find((k) => l === k.toLowerCase() || l.startsWith(k.toLowerCase() + "-"));
+    if (known) return known;
   }
   const prose = text.replace(/^---\n[\s\S]*?\n---\n/, "").replace(/```[\s\S]*?```/g, "").replace(/\$\$[\s\S]*?\$\$/g, "").replace(/\$[^$\n]*\$/g, "").replace(/\[\[[^\]]*\]\]/g, "").replace(/`[^`\n]*`/g, "");
   const cyr = (prose.match(/[А-Яа-яЁё]/g) ?? []).length;
@@ -184,8 +216,7 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
       codeLines.add(i);
     }
   }
-  let counter = 0;
-  let eqCounter = 0;
+  const auto = /* @__PURE__ */ new Set();
   let lastBlock = null;
   let lastBlockEnd = -1;
   const lastNested = /* @__PURE__ */ new Map();
@@ -232,8 +263,10 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
       if (type) {
         const meta = h[3];
         let number;
-        if (meta === void 0 || meta.trim() === "") number = String(++counter);
-        else if (meta.trim() === "*") number = null;
+        if (meta === void 0 || meta.trim() === "") {
+          number = null;
+          auto.add(callouts.length);
+        } else if (meta.trim() === "*") number = null;
         else number = meta.trim();
         const item = {
           kind: "callout",
@@ -286,6 +319,26 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
     }
     if (line.trim() !== "" && quoteDepth(line) === 0) lastBlock = null;
   }
+  const numberSections = fm.numberSections ?? opts.numberSections;
+  if (numberSections) numberHeadings(headings, lines, fm, opts);
+  const tops = headings.filter((h) => h.number && !h.number.includes("."));
+  const within = numberSections && opts.numberWithin && tops.length > 0;
+  const counterAt = () => {
+    let section = "0", k = 0;
+    return (line) => {
+      const s = within ? [...tops].reverse().find((h) => h.line < line)?.number ?? "0" : "";
+      if (s !== section) {
+        section = s;
+        k = 0;
+      }
+      return within ? `${s}.${++k}` : String(++k);
+    };
+  };
+  const next = counterAt();
+  callouts.forEach((c, k) => {
+    if (auto.has(k)) c.number = next(c.line);
+  });
+  const nextEq = counterAt();
   for (const e of equations) {
     if (!e.label) continue;
     const src = lines.slice(e.line, e.endLine + 1).join("\n");
@@ -294,10 +347,8 @@ function parseNote(text, opts = DEFAULT_SECTIONS) {
       e.tag = tag[1] ? tag[2] : `(${tag[2]})`;
       continue;
     }
-    e.number = String(++eqCounter);
+    e.number = nextEq(e.line);
   }
-  const numberSections = fm.numberSections ?? opts.numberSections;
-  if (numberSections) numberHeadings(headings, lines, fm, opts);
   return { lang, langFromFrontmatter: !!fm.lang, callouts, equations, labels, headings, numberSections, codeLines };
 }
 function numberHeadings(headings, lines, fm, opts) {
@@ -330,16 +381,18 @@ function numberHeadings(headings, lines, fm, opts) {
     h.number = parts.join(".");
   }
 }
-function refText(item) {
+function refText(item, lang = "en", shows = "number") {
   if (item.kind === "equation") return item.number === null ? item.tag : `(${item.number})`;
   if (item.kind === "heading") return item.number ?? item.text;
-  return item.number;
+  if (item.number === null || shows === "number") return item.number;
+  const name = captionHead(item, lang);
+  return shows === "full" && item.title ? `${name} (${item.title})` : name;
 }
 function findTarget(p, lt) {
   return lt.heading ? null : p.labels.get(lt.label) ?? null;
 }
 function captionHead(item, lang) {
-  const name = NAMES[lang][item.type];
+  const name = word(item.type, lang);
   return item.number === null ? name : `${name} ${item.number}`;
 }
 function parseLinktext(linktext) {
@@ -362,49 +415,175 @@ var import_obsidian = require("obsidian");
 var DEFAULT_SETTINGS = {
   language: "auto",
   plainStyle: true,
+  refShows: "number",
+  numberWithin: false,
   numberSections: DEFAULT_SECTIONS.numberSections,
   appendix: DEFAULT_SECTIONS.appendix,
   titleHeading: DEFAULT_SECTIONS.titleHeading,
   unnumbered: DEFAULT_SECTIONS.unnumbered.join(", "),
-  renameAsk: false
+  renameAsk: false,
+  words: {},
+  types: {}
+};
+var OBSIDIAN_CALLOUTS = [
+  "note",
+  "abstract",
+  "summary",
+  "tldr",
+  "info",
+  "todo",
+  "tip",
+  "hint",
+  "important",
+  "success",
+  "check",
+  "done",
+  "question",
+  "help",
+  "faq",
+  "warning",
+  "caution",
+  "attention",
+  "failure",
+  "fail",
+  "missing",
+  "danger",
+  "error",
+  "bug",
+  "quote",
+  "cite",
+  "math"
+];
+var STYLE_NAMES = {
+  plain: "as a theorem: italic text",
+  definition: "as a definition: upright text",
+  remark: "as a remark: upright text"
 };
 var TheoremSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    this.lang = "ru";
+    // language whose words are shown
+    this.newLang = "";
+    this.newType = "";
+    this.newStyle = "plain";
   }
   display() {
     const { containerEl } = this;
     containerEl.empty();
     const s = this.plugin.settings;
-    new import_obsidian.Setting(containerEl).setName("Caption language").setDesc("Language of \xABTheorem\xBB, \xABProof\xBB and so on. `lang: ru` / `lang: en` in a note's frontmatter always wins.").addDropdown((d) => d.addOption("auto", "Detect from the note").addOption("en", "English").addOption("ru", "\u0420\u0443\u0441\u0441\u043A\u0438\u0439").setValue(s.language).onChange((v) => {
-      s.language = v;
-      this.plugin.saveSettings();
-    }));
+    const save = () => this.plugin.saveSettings();
+    const redraw = async () => {
+      await save();
+      this.display();
+    };
+    new import_obsidian.Setting(containerEl).setName("Caption language").setDesc("Language of \xABTheorem\xBB, \xABProof\xBB and so on. `lang: ru` / `lang: en` in a note's frontmatter always wins.").addDropdown((d) => {
+      d.addOption("auto", "Detect from the note: Russian or English");
+      for (const l of languages()) d.addOption(l, l);
+      d.setValue(s.language).onChange((v) => {
+        s.language = v;
+        save();
+      });
+    });
     new import_obsidian.Setting(containerEl).setName("Plain style").setDesc("Theorem callouts without box and icon, with a bold caption, as in a printed text. Off: Obsidian's usual callout look.").addToggle((t) => t.setValue(s.plainStyle).onChange((v) => {
       s.plainStyle = v;
-      this.plugin.saveSettings();
+      save();
+    }));
+    new import_obsidian.Setting(containerEl).setName("References show").setDesc("What `[[#^lem-a]]` shows for a statement. With the number only, the word stays in your text and takes its case: \xAB\u043F\u043E \u043B\u0435\u043C\u043C\u0435 3\xBB.").addDropdown((d) => d.addOption("number", "The number: 3").addOption("name", "The name: Lemma 3").addOption("full", "The name and the title: Lemma 3 (small trace)").setValue(s.refShows).onChange((v) => {
+      s.refShows = v;
+      save();
     }));
     new import_obsidian.Setting(containerEl).setName("Sections").setHeading();
     new import_obsidian.Setting(containerEl).setName("Number sections").setDesc("Number the headings of every note: \xAB1\xBB, \xAB2.1\xBB. `numbersections: true` / `false` in a note's frontmatter wins. `^-` on the line below a heading leaves it without a number; a label `^name` there lets `[[#^name]]` show the number.").addToggle((t) => t.setValue(s.numberSections).onChange((v) => {
       s.numberSections = v;
-      this.plugin.saveSettings();
+      save();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Number statements within sections").setDesc("In a note with numbered sections, statements and equations are numbered anew in each section: \xABTheorem 2.3\xBB, \xAB(2.1)\xBB.").addToggle((t) => t.setValue(s.numberWithin).onChange((v) => {
+      s.numberWithin = v;
+      save();
     }));
     new import_obsidian.Setting(containerEl).setName("Appendix").setDesc("A label `^app-name` on the line below a top-level heading starts the appendix: from that heading on, sections are lettered A, B, subsections A.1, and `[[#^app-name]]` shows \xABA\xBB. The word \xABAppendix\xBB is not added; write it in the heading if you want it. Off: `^app-name` is an ordinary label.").addToggle((t) => t.setValue(s.appendix).onChange((v) => {
       s.appendix = v;
-      this.plugin.saveSettings();
+      save();
     }));
     new import_obsidian.Setting(containerEl).setName("First heading is the title").setDesc("The heading that opens a note is its title: it gets no number, and the PDF export takes it as the title. `thcl-title-heading: true` / `false` in a note's frontmatter wins.").addToggle((t) => t.setValue(s.titleHeading).onChange((v) => {
       s.titleHeading = v;
-      this.plugin.saveSettings();
+      save();
     }));
     new import_obsidian.Setting(containerEl).setName("Unnumbered headings").setDesc("Headings that get no number, separated by commas, unless a label `^name` stands below them.").addText((t) => t.setValue(s.unnumbered).onChange((v) => {
       s.unnumbered = v;
-      this.plugin.saveSettings();
+      save();
     }));
     new import_obsidian.Setting(containerEl).setName("Offer to update references after a heading is edited").setDesc("Obsidian leaves links to a heading unchanged when the heading is renamed. With this on, when the cursor leaves an edited heading, the plugin asks whether to update the links to it in the vault. Links to a label `[[#^name]]` need no update. The command \xABRename heading\xBB does the same at any time.").addToggle((t) => t.setValue(s.renameAsk).onChange((v) => {
       s.renameAsk = v;
       this.plugin.saveData(s);
+    }));
+    new import_obsidian.Setting(containerEl).setName("Caption words").setHeading().setDesc("The words of the captions in each language. An empty field keeps the word shown in grey. A note takes the words of its language: `lang: de` in the frontmatter, or the caption language above.");
+    if (!languages().includes(this.lang)) this.lang = "ru";
+    const builtin = this.lang in NAMES;
+    new import_obsidian.Setting(containerEl).setName("Language").addDropdown((d) => {
+      for (const l of languages()) d.addOption(l, l);
+      d.setValue(this.lang).onChange((v) => {
+        this.lang = v;
+        this.display();
+      });
+    }).addExtraButton((b) => b.setIcon("trash").setTooltip(builtin ? "Built-in languages stay" : `Remove ${this.lang}`).setDisabled(builtin).onClick(() => {
+      if (builtin) return;
+      delete s.words[this.lang];
+      this.lang = "ru";
+      redraw();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Add a language").setDesc("Its code, as in `lang:`: de, fr, uk. Words left empty are taken from English.").addText((t) => t.setPlaceholder("de").setValue(this.newLang).onChange((v) => {
+      this.newLang = v.trim().toLowerCase();
+    })).addButton((b) => b.setButtonText("Add").onClick(() => {
+      const l = this.newLang;
+      if (!/^[a-z]{2,3}(-[a-z0-9]+)?$/.test(l)) return new import_obsidian.Notice("A language code is two or three letters: de, fr, uk.");
+      if (languages().includes(l)) return new import_obsidian.Notice(`${l} is already there.`);
+      s.words[l] = {};
+      this.lang = l;
+      this.newLang = "";
+      redraw();
+    }));
+    const table = s.words[this.lang] ?? {};
+    for (const key of [...theoremTypes(), "proof"]) {
+      const fallback = NAMES[this.lang]?.[key] || NAMES.en[key] || key[0].toUpperCase() + key.slice(1);
+      new import_obsidian.Setting(containerEl).setName(key).setClass("theorem-settings-word").addText((t) => t.setPlaceholder(fallback).setValue(table[key] ?? "").onChange((v) => {
+        var _a, _b;
+        const w = (_a = s.words)[_b = this.lang] ?? (_a[_b] = {});
+        if (v.trim()) w[key] = v.trim();
+        else delete w[key];
+        save();
+      }));
+    }
+    new import_obsidian.Setting(containerEl).setName("Types of statements").setHeading().setDesc("Types of your own, such as `problem`: `> [!problem]` is then numbered with the other statements. Give it words above.");
+    for (const [type, style] of Object.entries(s.types)) {
+      new import_obsidian.Setting(containerEl).setName(type).setDesc(`${word(type, this.lang)}`).addDropdown((d) => {
+        for (const [k, v] of Object.entries(STYLE_NAMES)) d.addOption(k, v);
+        d.setValue(style).onChange((v) => {
+          s.types[type] = v;
+          save();
+        });
+      }).addExtraButton((b) => b.setIcon("trash").setTooltip(`Remove ${type}`).onClick(() => {
+        delete s.types[type];
+        redraw();
+      }));
+    }
+    new import_obsidian.Setting(containerEl).setName("Add a type").setDesc("Latin letters, as written in `> [!problem]`.").addText((t) => t.setPlaceholder("problem").setValue(this.newType).onChange((v) => {
+      this.newType = v.trim().toLowerCase();
+    })).addDropdown((d) => {
+      for (const [k, v] of Object.entries(STYLE_NAMES)) d.addOption(k, v);
+      d.setValue(this.newStyle).onChange((v) => {
+        this.newStyle = v;
+      });
+    }).addButton((b) => b.setButtonText("Add").onClick(() => {
+      const t = this.newType;
+      if (!/^[a-z]+$/.test(t)) return new import_obsidian.Notice("A type is written in Latin letters: problem.");
+      if (t in STYLES || t in TYPE_ALIASES || t in s.types) return new import_obsidian.Notice(`${t} is already a type.`);
+      if (OBSIDIAN_CALLOUTS.includes(t)) return new import_obsidian.Notice(`${t} is one of Obsidian's own callouts.`);
+      s.types[t] = this.newStyle;
+      this.newType = "";
+      redraw();
     }));
   }
 };
@@ -605,6 +784,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   }
   async onload() {
     this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
+    setCaptions({ words: this.settings.words, types: this.settings.types });
     this.addSettingTab(new TheoremSettingTab(this.app, this));
     this.applyBodyClass();
     this.register(() => document.body.removeClass("theorem-callouts-plain"));
@@ -628,6 +808,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+    setCaptions({ words: this.settings.words, types: this.settings.types });
     this.applyBodyClass();
     this.fileCache.clear();
     this.textCache.clear();
@@ -636,6 +817,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   }
   sections() {
     return {
+      numberWithin: this.settings.numberWithin,
       numberSections: this.settings.numberSections,
       appendix: this.settings.appendix,
       titleHeading: this.settings.titleHeading,
@@ -713,8 +895,12 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
   }
   /** Text a reference shows: the number, or null to keep the link as it is. */
   refShown(linktext, sourcePath, current) {
-    const { item } = this.resolveTarget(linktext, sourcePath, current);
-    return item && refText(item);
+    const { item, parsed } = this.resolveTarget(linktext, sourcePath, current);
+    return item && this.shown(item, parsed);
+  }
+  /** Text of a reference to `item` of the note `parsed`, in that note's language and as the settings ask. */
+  shown(item, parsed) {
+    return refText(item, this.langOf(parsed), this.settings.refShows);
   }
   /** File and item a reference points to, loading the target note if needed. */
   async locate(linktext, sourcePath, current) {
@@ -803,10 +989,10 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
       else if (m[2] !== void 0) span.appendText(m[2]);
       else {
         const linktext = m[1];
-        const { item } = this.resolveTarget(linktext, sourcePath, current());
-        const shown = item && refText(item);
+        const { item, parsed } = this.resolveTarget(linktext, sourcePath, current());
+        const shown = item && this.shown(item, parsed);
         const ref = span.appendChild(this.refEl(shown ?? "\u2026", linktext, sourcePath, current, source));
-        if (!shown) this.locate(linktext, sourcePath, current()).then((t) => ref.setText((t && refText(t.item)) ?? "??"));
+        if (!shown) this.locate(linktext, sourcePath, current()).then((t) => ref.setText((t && this.shown(t.item, t.parsed)) ?? "??"));
       }
     }
     span.appendText(text.slice(pos));
@@ -888,7 +1074,7 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
     }
     inner.appendText(".");
     inner.dataset.tcKey = key;
-    callout.addClass("theorem-callout", `theorem-callout-${item.type}`, `theorem-callout-${lang}`);
+    callout.addClass("theorem-callout", `theorem-callout-${item.type}`, `theorem-callout-${lang}`, `theorem-style-${styleOf(item.type)}`);
   }
   processLinks(el, sourcePath, current) {
     el.querySelectorAll("a.internal-link").forEach((a) => {
@@ -896,18 +1082,18 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
       const lt = parseLinktext(href);
       if (!lt) return;
       const aliased = !(a.textContent ?? "").includes(lt.label);
-      const set = (item2) => {
+      const set = (item2, target) => {
         if (item2?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
-        const t = item2 && refText(item2);
+        const t = item2 && this.shown(item2, target);
         if (t && !aliased) {
           a.setText(t);
           a.addClass("theorem-ref");
         }
       };
-      const { item, pending } = this.resolveTarget(href, sourcePath, current);
-      if (item || !pending) return set(item);
+      const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
+      if (item || !pending) return set(item, parsed);
       const file = this.linkFile(lt.path, sourcePath);
-      if (file) this.loadNote(file).then((p) => set(findTarget(p, lt)));
+      if (file) this.loadNote(file).then((p) => set(findTarget(p, lt), p));
     });
   }
   processProofs(el, lang, sourcePath, current) {
@@ -1034,8 +1220,8 @@ var TheoremCallouts = class extends import_obsidian3.Plugin {
               if (m[2]) {
                 const title = m[3] === void 0 ? null : m[3];
                 const key = title && title.replace(/\[\[([^\]|]+)\]\]/g, (_, lt) => {
-                  const { item } = plugin.resolveTarget(lt, sourcePath, parsed);
-                  return `[[${(item && refText(item)) ?? lt}]]`;
+                  const { item, parsed: target } = plugin.resolveTarget(lt, sourcePath, parsed);
+                  return `[[${(item && plugin.shown(item, target)) ?? lt}]]`;
                 });
                 b.add(a, z, import_view2.Decoration.replace({ widget: new ProofWidget(plugin, m[2], plugin.langOf(parsed), title, key, sourcePath) }));
                 continue;
@@ -1132,7 +1318,7 @@ function applyEquationNumber(el, eq) {
   el.createSpan({ cls: "theorem-eq-number", text });
 }
 function proofSpan(kind, lang) {
-  const span = createSpan({ cls: `theorem-proof-${kind} theorem-proof-${lang}`, text: PROOF[lang][kind] });
+  const span = createSpan({ cls: `theorem-proof-${kind} theorem-proof-${lang}`, text: kind === "begin" ? `${word("proof", lang)}.` : PROOF_END });
   return span;
 }
 var ProofWidget = class extends import_view2.WidgetType {

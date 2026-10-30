@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseNote, DEFAULT_SECTIONS, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod } from "../src/parse.ts";
+import { parseNote, DEFAULT_SECTIONS, setCaptions, styleOf, word, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod } from "../src/parse.ts";
 
 const note = `---
 created: 2026-10-19
@@ -183,4 +183,52 @@ test("a label inside a quote attaches to the callout nested there", () => {
 	const p = parseNote("> [!note]- Дополнения\n> Текст.\n>\n> > [!lemma]\n> > Утверждение.\n>\n> ^lem-x\n\n> [!theorem]\n> Т.\n^thm-y\n");
 	assert.equal(refText(p.labels.get("lem-x")!), "1");
 	assert.equal(refText(p.labels.get("thm-y")!), "2");
+});
+
+test("caption words, types of one's own, what a reference shows", () => {
+	setCaptions({ words: { de: { theorem: "Satz", problem: "Aufgabe" }, ru: { problem: "Задача" } }, types: { problem: "definition" } });
+	const p = parseNote("---\nlang: de-CH\n---\n> [!theorem] Haupt\n> Text.\n^thm-a\n\n> [!problem]\n> Text.\n^pr-b\n\n> [!lemma]\n> Text.");
+	assert.equal(p.lang, "de");
+	assert.deepEqual(p.callouts.map(c => captionHead(c, p.lang)), ["Satz 1", "Aufgabe 2", "Lemma 3"]);
+	assert.equal(styleOf("problem"), "definition");
+	assert.equal(word("proof", "de"), "Proof");
+	assert.equal(refText(p.labels.get("thm-a")!, "de", "number"), "1");
+	assert.equal(refText(p.labels.get("thm-a")!, "de", "name"), "Satz 1");
+	assert.equal(refText(p.labels.get("thm-a")!, "de", "full"), "Satz 1 (Haupt)");
+	assert.equal(refText(p.labels.get("pr-b")!, "ru", "full"), "Задача 2");
+	setCaptions({ words: {}, types: {} });
+	assert.equal(parseNote("> [!problem]\n> Текст.").callouts.length, 0);
+});
+
+test("numbering within sections", () => {
+	const src = `---
+numbersections: true
+---
+> [!lemma]
+> До разделов.
+
+## Первый
+> [!theorem]
+> А.
+
+$$x$$ ^eq-a
+
+## Без номера
+^-
+
+> [!lemma]
+> Б.
+
+## Второй
+> [!lemma]
+> В.
+^lem-c
+
+$$y$$ ^eq-b
+`;
+	const p = parseNote(src, { ...DEFAULT_SECTIONS, numberWithin: true });
+	assert.deepEqual(p.callouts.map(c => c.number), ["0.1", "1.1", "1.2", "2.1"]);
+	assert.equal(refText(p.labels.get("eq-b")!), "(2.1)");
+	assert.equal(refText(p.labels.get("eq-a")!), "(1.1)");
+	assert.deepEqual(parseNote(src).callouts.map(c => c.number), ["1", "2", "3", "4"]);
 });

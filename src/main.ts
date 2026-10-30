@@ -8,7 +8,7 @@ import {
 import { RangeSetBuilder, StateEffect, Text } from "@codemirror/state";
 import {
 	parseNote, ParsedNote, SectionOptions, CalloutItem, EquationItem, HeadingItem, Item, Lang,
-	PROOF, theoremType, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
+	PROOF_END, word, styleOf, setCaptions, theoremType, refText, captionHead, parseLinktext, findTarget, proofTitle, withPeriod,
 } from "./parse";
 import { TheoremSettings, DEFAULT_SETTINGS, TheoremSettingTab } from "./settings";
 import { renameCommand, renameWatcher } from "./rename-ui";
@@ -26,6 +26,7 @@ export default class TheoremCallouts extends Plugin {
 
 	async onload() {
 		this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+		setCaptions({ words: this.settings.words, types: this.settings.types });
 		this.addSettingTab(new TheoremSettingTab(this.app, this));
 		this.applyBodyClass();
 		this.register(() => document.body.removeClass("theorem-callouts-plain"));
@@ -52,6 +53,7 @@ export default class TheoremCallouts extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		setCaptions({ words: this.settings.words, types: this.settings.types });
 		this.applyBodyClass();
 		// Section numbers depend on the settings: parse every note again.
 		this.fileCache.clear();
@@ -62,6 +64,7 @@ export default class TheoremCallouts extends Plugin {
 
 	sections(): SectionOptions {
 		return {
+			numberWithin: this.settings.numberWithin,
 			numberSections: this.settings.numberSections,
 			appendix: this.settings.appendix,
 			titleHeading: this.settings.titleHeading,
@@ -147,8 +150,13 @@ export default class TheoremCallouts extends Plugin {
 
 	/** Text a reference shows: the number, or null to keep the link as it is. */
 	refShown(linktext: string, sourcePath: string, current: ParsedNote | null): string | null {
-		const { item } = this.resolveTarget(linktext, sourcePath, current);
-		return item && refText(item);
+		const { item, parsed } = this.resolveTarget(linktext, sourcePath, current);
+		return item && this.shown(item, parsed);
+	}
+
+	/** Text of a reference to `item` of the note `parsed`, in that note's language and as the settings ask. */
+	shown(item: Item, parsed: ParsedNote | null): string | null {
+		return refText(item, this.langOf(parsed), this.settings.refShows);
 	}
 
 	/** File and item a reference points to, loading the target note if needed. */
@@ -240,10 +248,10 @@ export default class TheoremCallouts extends Plugin {
 			else if (m[2] !== undefined) span.appendText(m[2]);
 			else {
 				const linktext = m[1];
-				const { item } = this.resolveTarget(linktext, sourcePath, current());
-				const shown = item && refText(item);
+				const { item, parsed } = this.resolveTarget(linktext, sourcePath, current());
+				const shown = item && this.shown(item, parsed);
 				const ref = span.appendChild(this.refEl(shown ?? "…", linktext, sourcePath, current, source));
-				if (!shown) this.locate(linktext, sourcePath, current()).then(t => ref.setText((t && refText(t.item)) ?? "??"));
+				if (!shown) this.locate(linktext, sourcePath, current()).then(t => ref.setText((t && this.shown(t.item, t.parsed)) ?? "??"));
 			}
 		}
 		span.appendText(text.slice(pos));
@@ -329,7 +337,7 @@ export default class TheoremCallouts extends Plugin {
 		}
 		inner.appendText(".");
 		inner.dataset.tcKey = key;
-		callout.addClass("theorem-callout", `theorem-callout-${item.type}`, `theorem-callout-${lang}`);
+		callout.addClass("theorem-callout", `theorem-callout-${item.type}`, `theorem-callout-${lang}`, `theorem-style-${styleOf(item.type)}`);
 	}
 
 	private processLinks(el: HTMLElement, sourcePath: string, current: ParsedNote | null) {
@@ -338,15 +346,15 @@ export default class TheoremCallouts extends Plugin {
 			const lt = parseLinktext(href);
 			if (!lt) return;
 			const aliased = !(a.textContent ?? "").includes(lt.label); // the link has its own alias
-			const set = (item: Item | null) => {
+			const set = (item: Item | null, target: ParsedNote | null) => {
 				if (item?.kind === "equation") this.bindEquationLink(a, href, sourcePath, current);
-				const t = item && refText(item);
+				const t = item && this.shown(item, target);
 				if (t && !aliased) { a.setText(t); a.addClass("theorem-ref"); }
 			};
-			const { item, pending } = this.resolveTarget(href, sourcePath, current);
-			if (item || !pending) return set(item);
+			const { item, pending, parsed } = this.resolveTarget(href, sourcePath, current);
+			if (item || !pending) return set(item, parsed);
 			const file = this.linkFile(lt.path, sourcePath);
-			if (file) this.loadNote(file).then(p => set(findTarget(p, lt)));
+			if (file) this.loadNote(file).then(p => set(findTarget(p, lt), p));
 		});
 	}
 
@@ -470,8 +478,8 @@ export default class TheoremCallouts extends Plugin {
 								const title = m[3] === undefined ? null : m[3];
 								// Numbers in a caption are part of the widget's identity, so a renumbering redraws it.
 								const key = title && title.replace(/\[\[([^\]|]+)\]\]/g, (_, lt) => {
-									const { item } = plugin.resolveTarget(lt, sourcePath, parsed);
-									return `[[${(item && refText(item)) ?? lt}]]`;
+									const { item, parsed: target } = plugin.resolveTarget(lt, sourcePath, parsed);
+									return `[[${(item && plugin.shown(item, target)) ?? lt}]]`;
 								});
 								b.add(a, z, Decoration.replace({ widget: new ProofWidget(plugin, m[2] as "begin" | "end", plugin.langOf(parsed), title, key, sourcePath) }));
 								continue;
@@ -583,7 +591,7 @@ function applyEquationNumber(el: HTMLElement, eq: EquationItem) {
 }
 
 function proofSpan(kind: "begin" | "end", lang: Lang): HTMLElement {
-	const span = createSpan({ cls: `theorem-proof-${kind} theorem-proof-${lang}`, text: PROOF[lang][kind] });
+	const span = createSpan({ cls: `theorem-proof-${kind} theorem-proof-${lang}`, text: kind === "begin" ? `${word("proof", lang)}.` : PROOF_END });
 	return span;
 }
 

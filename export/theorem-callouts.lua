@@ -39,11 +39,11 @@ local NAMES = {
   ru = { theorem = "Теорема", lemma = "Лемма", proposition = "Предложение", corollary = "Следствие",
     claim = "Утверждение", conjecture = "Гипотеза", hypothesis = "Гипотеза", definition = "Определение",
     example = "Пример", exercise = "Упражнение", axiom = "Аксиома", assumption = "Предположение",
-    remark = "Замечание", question = "Вопрос", note = "Примечание" },
+    remark = "Замечание", question = "Вопрос", note = "Примечание", proof = "Доказательство" },
   en = { theorem = "Theorem", lemma = "Lemma", proposition = "Proposition", corollary = "Corollary",
     claim = "Claim", conjecture = "Conjecture", hypothesis = "Hypothesis", definition = "Definition",
     example = "Example", exercise = "Exercise", axiom = "Axiom", assumption = "Assumption",
-    remark = "Remark", question = "Question", note = "Note" },
+    remark = "Remark", question = "Question", note = "Note", proof = "Proof" },
 }
 local READER = "commonmark_x+hard_line_breaks-superscript-subscript"
 
@@ -65,7 +65,7 @@ local VAULT = find_vault()
 
 -- The plugin's settings, so that the PDF numbers sections as the plugin does.
 local function load_settings()
-  local s = { numberSections = false, appendix = false, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
+  local s = { numberSections = false, appendix = false, numberWithin = false, refShows = "number", words = {}, types = {}, titleHeading = false, unnumbered = "References, Bibliography, Литература, Список литературы" }
   local f = io.open(VAULT .. "/.obsidian/plugins/theorem-callouts/data.json", "r")
   if f then
     local ok, d = pcall(pandoc.json.decode, f:read("a"), false)
@@ -77,9 +77,23 @@ local function load_settings()
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
     if name ~= "" then list[#list + 1] = name end
   end
-  return { numberSections = s.numberSections == true, appendix = s.appendix == true, titleHeading = s.titleHeading == true, unnumbered = list }
+  return { numberSections = s.numberSections == true, appendix = s.appendix == true, numberWithin = s.numberWithin == true,
+    refShows = s.refShows, words = type(s.words) == "table" and s.words or {}, types = type(s.types) == "table" and s.types or {},
+    titleHeading = s.titleHeading == true, unnumbered = list }
 end
 local SETTINGS = load_settings()
+
+-- Caption words and types of statements from the settings. A word a language lacks is taken from English,
+-- and a type without a word is shown as its name.
+for l, words in pairs(SETTINGS.words) do
+  NAMES[l] = NAMES[l] or {}
+  for k, v in pairs(words) do NAMES[l][k] = v end
+end
+for t, style in pairs(SETTINGS.types) do
+  if not THEOREM_TYPES[t] then THEOREM_TYPES[t] = style; ORDER[#ORDER + 1] = t end
+end
+setmetatable(NAMES.en, { __index = function(_, k) return k:sub(1, 1):upper() .. k:sub(2) end })
+for l, words in pairs(NAMES) do if l ~= "en" then setmetatable(words, { __index = NAMES.en }) end end
 
 local lang = "en"
 
@@ -131,9 +145,10 @@ local function trailing_label(quote, remove)
 end
 
 local function detect_lang(doc)
-  local meta_lang = doc.meta.lang and pandoc.utils.stringify(doc.meta.lang) or ""
-  if meta_lang:match("^ru") then return "ru" end
-  if meta_lang:match("^en") then return "en" end
+  local meta_lang = doc.meta.lang and pandoc.utils.stringify(doc.meta.lang):lower() or ""
+  for l in pairs(NAMES) do
+    if meta_lang == l or meta_lang:sub(1, #l + 1) == l .. "-" then return l end
+  end
   local parts = {}
   doc:walk({ Str = function(s) parts[#parts + 1] = s.text end })
   local text = table.concat(parts, " ")
@@ -142,20 +157,27 @@ local function detect_lang(doc)
   return (cyr > 0 and cyr >= lat) and "ru" or "en"
 end
 
--- Numbers of labelled statements and equations in a parsed document, as the plugin shows them.
-local function number_labels(blocks)
-  local numbers, counter, eq = {}, 0, 0
-  local function visit(list)
+-- Numbers of labelled statements and equations in a parsed document, as the plugin shows them, and the type
+-- and title of each labelled statement. `nums` are the section numbers by block index: with the setting
+-- to number within sections, the counters start anew at each numbered top-level section, as \numberwithin does.
+local function number_labels(blocks, nums)
+  local numbers, kinds, counter, eq, section = {}, {}, 0, 0, "0"
+  local within = SETTINGS.numberWithin and nums and next(nums) ~= nil
+  local function shown(k) return within and section .. "." .. k or tostring(k) end
+  local function visit(list, top)
     for i, b in ipairs(list) do
-      local tag, meta = callout_header(b)
+      if top and within and b.t == "Header" and nums[i] and not nums[i]:find("%.") then
+        section, counter, eq = nums[i], 0, 0
+      end
+      local tag, meta, title = callout_header(b)
       if tag and THEOREM_TYPES[tag] then
         local n
-        if meta == "" then counter = counter + 1; n = tostring(counter)
+        if meta == "" then counter = counter + 1; n = shown(counter)
         elseif meta ~= "*" then n = meta end
         local lab = label_of(list[i + 1]) or trailing_label(b, false)
-        if lab and n then numbers[lab] = n end
+        if lab and n then numbers[lab] = n; kinds[lab] = { type = tag, title = title } end
       end
-      if b.t == "BlockQuote" then visit(b.content) end
+      if b.t == "BlockQuote" then visit(b.content, false) end
       if b.t == "Para" then
         for k, x in ipairs(b.content) do
           if x.t == "Math" and x.mathtype == "DisplayMath" then
@@ -164,14 +186,14 @@ local function number_labels(blocks)
             local lab = nxt and nxt.t == "Str" and nxt.text:match("^%^([%w_-]+)$")
             local star, tag = x.text:match("\\tag(%*?)(%b{})")
             if lab and tag then numbers[lab] = star == "*" and tag:sub(2, -2) or "(" .. tag:sub(2, -2) .. ")"
-            elseif lab then eq = eq + 1; numbers[lab] = "(" .. eq .. ")" end
+            elseif lab then eq = eq + 1; numbers[lab] = "(" .. shown(eq) .. ")" end
           end
         end
       end
     end
   end
-  visit(blocks)
-  return numbers
+  visit(blocks, true)
+  return numbers, kinds
 end
 
 -- Links compare heading text without regard to case and runs of spaces.
@@ -271,9 +293,19 @@ local function external_number(note, label)
       if f then
         local text = f:read("a"); f:close()
         local doc = pandoc.read(text, READER)
-        numbers = number_labels(doc.blocks)
         if doc.blocks[1] and doc.blocks[1].t == "Header" and title_heading(doc) then doc.blocks:remove(1) end
         local nums, labels = number_headings(doc.blocks, numbered(doc))
+        local kinds
+        numbers, kinds = number_labels(doc.blocks, nums)
+        -- A statement shows its name, or its name and title, when the setting asks so.
+        local l = detect_lang(doc)
+        for lab, kind in pairs(kinds) do
+          if SETTINGS.refShows ~= "number" then
+            local name = NAMES[l][kind.type] .. " " .. numbers[lab]
+            if SETTINGS.refShows == "full" and #kind.title > 0 then name = name .. " (" .. pandoc.utils.stringify(kind.title) .. ")" end
+            numbers[lab] = name
+          end
+        end
         for i, lab in pairs(labels) do numbers[lab] = nums[i] or pandoc.utils.stringify(doc.blocks[i].content) end
       end
     end
@@ -284,7 +316,7 @@ end
 
 -- ---------- inline: wiki links, embeds, proofs ----------
 
-local local_labels, local_texts = {}, {}
+local local_labels, local_texts, local_kinds = {}, {}, {}
 
 local function wikilink(content)
   local target, alias = content:match("^([^|]*)|(.*)$")
@@ -297,6 +329,12 @@ local function wikilink(content)
     if note == "" then
       if local_texts[label] then return pandoc.Str(local_texts[label]) end
       local shown = local_labels[label]
+      local kind = local_kinds[label]
+      if shown and kind and SETTINGS.refShows ~= "number" then
+        local tex = NAMES[lang][kind.type] .. "~\\ref{" .. label .. "}"
+        if SETTINGS.refShows == "full" and #kind.title > 0 then tex = tex .. " (" .. latex(kind.title) .. ")" end
+        return pandoc.RawInline("latex", tex)
+      end
       -- Equations are referred to with parentheses, as the plugin shows them: \eqref.
       if shown then return pandoc.RawInline("latex", (shown:match("^%(") and "\\eqref{" or "\\ref{") .. label .. "}") end
       return pandoc.Str("??")
@@ -390,7 +428,7 @@ local function process_inlines(inlines)
       end
     elseif x.t == "Code" and (x.text == "\\begin{proof}" or x.text:match("^\\begin{proof}%[.*%]$")) then
       -- Printed as text, not as the proof environment: proofs may close inside a list or a callout.
-      local caption = lang == "ru" and "Доказательство." or "Proof."
+      local caption = NAMES[lang].proof .. "."
       local own = x.text:match("^\\begin{proof}%[(.*)%]$")
       if own then
         own = own:gsub("^%s+", ""):gsub("%s+$", "")
@@ -469,7 +507,7 @@ local function process_blocks(blocks)
   return out
 end
 
-local function theorem_header()
+local function theorem_header(within)
   local t = {}
   local function add(style)
     table.insert(t, "\\theoremstyle{" .. style .. "}")
@@ -483,6 +521,7 @@ local function theorem_header()
   end
   table.insert(t, "\\newcommand{\\tcname}{}")
   add("plain"); add("definition"); add("remark")
+  if within then table.insert(t, "\\numberwithin{theorem}{section}\\numberwithin{equation}{section}") end
   table.insert(t, "\\makeatletter\\newcommand{\\tcsetlabel}[1]{\\def\\@currentlabel{#1}}\\makeatother")
   return pandoc.RawBlock("latex", table.concat(t, "\n"))
 end
@@ -523,12 +562,14 @@ function Pandoc(doc)
   if on and not doc.meta.secnumdepth then doc.meta.secnumdepth = pandoc.MetaString("3") end
 
   -- Labels of numbered statements and equations in this note; links to anything else print "??".
-  for lab, shown in pairs(number_labels(doc.blocks)) do local_labels[lab] = shown end
+  local numbers, kinds = number_labels(doc.blocks)
+  for lab, shown in pairs(numbers) do local_labels[lab] = shown end
+  local_kinds = kinds
 
   doc = doc:walk({ Inlines = process_inlines })
   doc = doc:walk({ Blocks = process_blocks })
 
   -- \newtheorem is allowed in the body; header-includes would be overridden by include-in-header.
-  doc.blocks:insert(1, theorem_header())
+  doc.blocks:insert(1, theorem_header(on and SETTINGS.numberWithin))
   return doc
 end
