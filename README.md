@@ -122,6 +122,7 @@ A note written for Math Booster with its default settings renders here different
 
 - Autocomplete: typing `\ref` lists the numbered statements and equations of the note and of the vault, and inserts the link, adding a label where there is none; a command to search them.
 - Other numbering styles: «Appendix A» as the caption of an appendix, and a number style per section.
+- Built-in export: a command to export the active note to PDF or LaTeX via pandoc, using the bundled Lua filter and header, without requiring a third-party plugin.
 
 ## Development
 
