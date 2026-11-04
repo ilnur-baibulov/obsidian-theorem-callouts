@@ -597,6 +597,8 @@ function Pandoc(doc)
       if lab then
         b.identifier = lab
         if nums[i] then local_labels[lab] = nums[i] else local_texts[lab] = b.content:clone() end
+      else
+        b.identifier = ""
       end
     end
     if not (doc.blocks[i - 1] and doc.blocks[i - 1].t == "Header" and label_of(b)) then blocks:insert(b) end
