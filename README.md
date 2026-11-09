@@ -2,6 +2,8 @@
 
 An Obsidian plugin for mathematical notes. It numbers theorem-like callouts, labelled equations and, on request, sections; shows cross-references as bare numbers; and renders proof markers. It has no dependencies. A pandoc filter in `export/` makes a PDF with the same numbers.
 
+> **Note.** This is a vibe-coded personal tool built around my own workflow. Feel free to use, adapt or fork it.
+
 ## Goals
 
 - Numbered statements and references in Obsidian notes that look like a printed mathematical text: «Lemma 3», «by Lemma 3», «(1)», *Proof.* … □.
